@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk.Razor">
+	<!--
+		Browser side of the hot reload (see README.md): reference this from the Blazor WebAssembly app, in Debug builds only.
+		The build/Dtr.Blazor.HotReload.targets in the package is imported into the app's build automatically.
+	-->
+	<PropertyGroup>
+		<AssemblyName>Dtr.Blazor.HotReload</AssemblyName>
+		<RootNamespace>Dtr.Blazor.HotReload</RootNamespace>
+		<IsPackable>true</IsPackable>
+		<PackageId>Dtr.Blazor.HotReload</PackageId>
+		<Description>Hot reload for Blazor WebAssembly apps that applies (almost) any change while the app runs: in place where possible (keeping all state), otherwise by swapping in a new version of the app (carrying over state). Use together with the Dtr.Blazor.HotReload.Server tool. Reference it in Debug builds only.</Description>
+		<!-- Ship the PDB in the package, for line numbers in stack traces -->
+		<DebugType>portable</DebugType>
+		<AllowedOutputExtensionsInPackageBuildOutputFolder>$(AllowedOutputExtensionsInPackageBuildOutputFolder);.pdb</AllowedOutputExtensionsInPackageBuildOutputFolder>
+	</PropertyGroup>
+	<ItemGroup>
+		<SupportedPlatform Include="browser" />
+		<InternalsVisibleTo Include="Dtr.Blazor.HotReload.UnitTest" />
+	</ItemGroup>
+	<ItemGroup>
+		<PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly" />
+	</ItemGroup>
+</Project>

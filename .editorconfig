@@ -1,0 +1,157 @@
+# Root editor config for the entire repo, with the basics.
+# See more specific editor configs in subdirs, like dotnet/.editorconfig.
+
+root = true
+
+[*]
+charset = utf-8
+indent_style = tab
+indent_size = 4
+max_line_length = 140
+
+[*.cs]
+# Note that the defaults are set by "AnalysisMode" in Directory.Builds.props.
+
+##################################
+# TODO: Enable
+##################################
+dotnet_diagnostic.CA1305.severity		= suggestion	# The behavior of 'StringBuilder.Append(ref StringBuilder.AppendInterpolatedStringHandler)' could vary
+dotnet_diagnostic.CA1873.severity		= suggestion	# Evaluation of this argument may be expensive and unnecessary if logging is disable
+dotnet_diagnostic.CA5372.severity		= suggestion	# This overload of the 'XPathDocument.XPathDocument' method is potentially unsafe
+dotnet_diagnostic.CS8601.severity		= suggestion	# Possible null reference assignment
+dotnet_diagnostic.CS8602.severity		= suggestion	# Dereference of a possibly null reference
+dotnet_diagnostic.CS8603.severity		= suggestion	# Possible null reference return
+dotnet_diagnostic.CS8604.severity		= suggestion	# Possible null reference argument for parameter
+dotnet_diagnostic.CS8618.severity		= suggestion	# Non-nullable field must contain a non-null value when exiting constructor. Consider adding the 'required' modifier or declaring as nullable.
+dotnet_diagnostic.MSTEST0032.severity	= suggestion	# Review or remove the assertion as its condition is known to be always true
+dotnet_diagnostic.MSTEST0037.severity	= suggestion	# Use 'Assert.HasCount/IsEmpty'
+dotnet_diagnostic.S1199.severity		= suggestion	# Extract this nested code block into a separate method
+dotnet_diagnostic.S4036.severity		= suggestion	# Use an absolute path for this command
+dotnet_diagnostic.S4790.severity		= suggestion	# Use a stronger hashing algorithm
+dotnet_diagnostic.S5122.severity		= suggestion	# Restrict this CORS policy
+dotnet_diagnostic.S6444.severity		= suggestion	# Pass a timeout to limit the execution time (regex)
+dotnet_diagnostic.S8969.severity		= suggestion	# Remove this null-forgiving operator
+dotnet_diagnostic.S8970.severity		= suggestion	# Remove this null-forgiving operator
+dotnet_diagnostic.VSTHRD103.severity	= suggestion	# Method synchronously blocks
+
+##################################
+# Turn off some stuff
+##################################
+dotnet_diagnostic.CA1014.severity		= none			# Mark assemblies with CLSCompliant
+dotnet_diagnostic.CA1031.severity		= none			# Do not catch general exception types
+dotnet_diagnostic.CA1032.severity		= none			# Implement standard exception constructors
+dotnet_diagnostic.CA1034.severity		= none			# Nested types should not be visible
+dotnet_diagnostic.CA1054.severity		= none			# URI-like parameters should not be strings
+dotnet_diagnostic.CA1055.severity		= none			# URI-like return values should not be strings
+dotnet_diagnostic.CA1056.severity		= none			# URI-like properties should not be strings
+dotnet_diagnostic.CA1308.severity		= none			# Normalize strings to uppercase
+dotnet_diagnostic.CA1824.severity		= none			# Mark assemblies with NeutralResourcesLanguageAttribute
+dotnet_diagnostic.CA1848.severity		= none			# Use the LoggerMessage delegates
+dotnet_diagnostic.CA1873.severity		= none			# Evaluation of this argument may be expensive and unnecessary if logging is disable
+dotnet_diagnostic.CA2008.severity		= none			# Do not create tasks without passing a TaskScheduler
+dotnet_diagnostic.CA2237.severity		= none			# Mark ISerializable types with serializable
+dotnet_diagnostic.CS1591.severity		= none			# Missing XML comment for publicly visible type or member
+dotnet_diagnostic.IDE0008.severity		= none			# Use explicit type
+dotnet_diagnostic.IDE0021.severity		= none			# Use block body for constructors
+dotnet_diagnostic.IDE0022.severity		= none			# Use expression body for methods
+dotnet_diagnostic.IDE0025.severity		= none			# Use expression body for properties
+dotnet_diagnostic.IDE0027.severity		= none			# Use expression body for accessors
+dotnet_diagnostic.IDE0058.severity		= none			# Expression value is never used
+dotnet_diagnostic.IDE0066.severity		= none			# Convert switch statement to expression
+dotnet_diagnostic.IDE0160.severity		= none			# Convert to block scoped namespace
+dotnet_diagnostic.IDE0305.severity		= none			# Use collection expression
+dotnet_diagnostic.S1133.severity		= none			# Deprecated code should be removed
+dotnet_diagnostic.S1135.severity		= none			# Track uses of "TODO" tags
+dotnet_diagnostic.S2971.severity		= none			# "IEnumerable" LINQs should be simplified
+dotnet_diagnostic.S3236.severity		= none			# Caller information arguments should not be provided explicitly
+dotnet_diagnostic.S3267.severity		= none			# Loops should be simplified with "LINQ" expressions
+dotnet_diagnostic.S3925.severity		= none			# "ISerializable" should be implemented correctly
+dotnet_diagnostic.S4457.severity		= none			# Parameter validation in "async"/"await" methods should be wrapped
+dotnet_diagnostic.S4487.severity		= none			# Unread "private" fields should be removed
+dotnet_diagnostic.S5332.severity		= none			# Using http protocol is insecure
+dotnet_diagnostic.SA1101.severity		= none			# Prefix local calls with this
+dotnet_diagnostic.SA1124.severity		= none			# Do not use regions
+dotnet_diagnostic.SA1200.severity		= none			# Using directives should be placed correctly
+dotnet_diagnostic.SA1309.severity		= none			# Field names should not begin with underscore
+dotnet_diagnostic.SA1600.severity		= none			# Elements should be documented
+dotnet_diagnostic.SA1601.severity		= none			# Partial elements should be documented
+dotnet_diagnostic.SA1611.severity		= none			# Element parameters should be documented
+dotnet_diagnostic.SA1615.severity		= none			# Element return value should be documented
+dotnet_diagnostic.SA1618.severity		= none			# Generic type parameters should be documented
+dotnet_diagnostic.SA1623.severity		= none			# The property's documentation summary text should begin with standard text
+dotnet_diagnostic.SA1633.severity		= none			# File should have header
+dotnet_diagnostic.SA1642.severity		= none			# Constructor summary documentation should begin with standard text
+
+##################################
+# StyleCop rules that conflict with CSharpier
+# https://csharpier.com/docs/IntegratingWithLinters
+##################################
+dotnet_diagnostic.SA1000.severity		= none
+dotnet_diagnostic.SA1001.severity		= none
+dotnet_diagnostic.SA1002.severity		= none
+dotnet_diagnostic.SA1003.severity		= none
+dotnet_diagnostic.SA1007.severity		= none
+dotnet_diagnostic.SA1008.severity		= none
+dotnet_diagnostic.SA1009.severity		= none
+dotnet_diagnostic.SA1010.severity		= none
+dotnet_diagnostic.SA1011.severity		= none
+dotnet_diagnostic.SA1012.severity		= none
+dotnet_diagnostic.SA1013.severity		= none
+dotnet_diagnostic.SA1014.severity		= none
+dotnet_diagnostic.SA1015.severity		= none
+dotnet_diagnostic.SA1016.severity		= none
+dotnet_diagnostic.SA1017.severity		= none
+dotnet_diagnostic.SA1018.severity		= none
+dotnet_diagnostic.SA1019.severity		= none
+dotnet_diagnostic.SA1020.severity		= none
+dotnet_diagnostic.SA1021.severity		= none
+dotnet_diagnostic.SA1022.severity		= none
+dotnet_diagnostic.SA1023.severity		= none
+dotnet_diagnostic.SA1024.severity		= none
+dotnet_diagnostic.SA1025.severity		= none
+dotnet_diagnostic.SA1026.severity		= none
+dotnet_diagnostic.SA1027.severity		= none
+dotnet_diagnostic.SA1028.severity		= none
+dotnet_diagnostic.SA1102.severity		= none
+dotnet_diagnostic.SA1103.severity		= none
+dotnet_diagnostic.SA1104.severity		= none
+dotnet_diagnostic.SA1105.severity		= none
+dotnet_diagnostic.SA1107.severity		= none
+dotnet_diagnostic.SA1110.severity		= none
+dotnet_diagnostic.SA1111.severity		= none
+dotnet_diagnostic.SA1112.severity		= none
+dotnet_diagnostic.SA1113.severity		= none
+dotnet_diagnostic.SA1114.severity		= none
+dotnet_diagnostic.SA1115.severity		= none
+dotnet_diagnostic.SA1116.severity		= none
+dotnet_diagnostic.SA1117.severity		= none
+dotnet_diagnostic.SA1118.severity		= none
+dotnet_diagnostic.SA1127.severity		= none
+dotnet_diagnostic.SA1127.severity		= none
+dotnet_diagnostic.SA1128.severity		= none
+dotnet_diagnostic.SA1128.severity		= none
+dotnet_diagnostic.SA1136.severity		= none
+dotnet_diagnostic.SA1137.severity		= none
+dotnet_diagnostic.SA1413.severity		= none
+dotnet_diagnostic.SA1500.severity		= none
+dotnet_diagnostic.SA1501.severity		= none
+dotnet_diagnostic.SA1502.severity		= none
+dotnet_diagnostic.SA1504.severity		= none
+dotnet_diagnostic.SA1505.severity		= none
+dotnet_diagnostic.SA1506.severity		= none
+dotnet_diagnostic.SA1507.severity		= none
+dotnet_diagnostic.SA1508.severity		= none
+dotnet_diagnostic.SA1509.severity		= none
+dotnet_diagnostic.SA1510.severity		= none
+dotnet_diagnostic.SA1511.severity		= none
+dotnet_diagnostic.SA1515.severity		= none
+dotnet_diagnostic.SA1516.severity		= none
+dotnet_diagnostic.SA1517.severity		= none
+dotnet_diagnostic.SA1518.severity		= none
+
+[*.dockerfile]
+end_of_line = lf
+
+[*.{yml,yaml}]
+indent_style= space
+indent_size = 2

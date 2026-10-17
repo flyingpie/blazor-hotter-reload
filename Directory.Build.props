@@ -1,0 +1,30 @@
+<Project>
+	<PropertyGroup>
+		<TargetFramework>net10.0</TargetFramework>
+		<Nullable>enable</Nullable>
+		<LangVersion>latest</LangVersion>
+		<GenerateDocumentationFile>true</GenerateDocumentationFile>
+		<!-- CS1591: Missing XML comment for publicly visible type or member -->
+		<NoWarn>$(NoWarn);CS1591</NoWarn>
+		<AnalysisMode>Recommended</AnalysisMode>
+		<EnableNETAnalyzers>true</EnableNETAnalyzers>
+		<TreatWarningsAsErrors Condition="'$(Configuration)' == 'Release'">true</TreatWarningsAsErrors>
+	</PropertyGroup>
+
+	<!-- Packaging -->
+	<PropertyGroup>
+		<!-- Bump this for every release: consumers cache packages by version. -->
+		<VersionPrefix>0.1.1</VersionPrefix>
+		<Authors>DataRotonde</Authors>
+		<Copyright>DataRotonde</Copyright>
+		<PackageTags>blazor;webassembly;hotreload;hot-reload</PackageTags>
+		<PackageReadmeFile>README.md</PackageReadmeFile>
+		<PackageOutputPath>$(MSBuildThisFileDirectory)artifacts</PackageOutputPath>
+		<IsPackable>false</IsPackable>
+		<EmbedAllSources>true</EmbedAllSources>
+	</PropertyGroup>
+
+	<ItemGroup Condition="'$(IsPackable)' == 'true'">
+		<None Include="$(MSBuildThisFileDirectory)README.md" Pack="true" PackagePath="/" Visible="false" />
+	</ItemGroup>
+</Project>

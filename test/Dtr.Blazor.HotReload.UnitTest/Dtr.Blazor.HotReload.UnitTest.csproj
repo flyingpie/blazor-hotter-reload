@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+	<PropertyGroup>
+		<AssemblyName>Dtr.Blazor.HotReload.UnitTest</AssemblyName>
+		<RootNamespace>Dtr.Blazor.HotReload.UnitTest</RootNamespace>
+		<Nullable>annotations</Nullable>
+		<EnableNETAnalyzers>false</EnableNETAnalyzers>
+		<IsTestProject>true</IsTestProject>
+	</PropertyGroup>
+	<ItemGroup>
+		<ProjectReference Include="..\..\src\Dtr.Blazor.HotReload\Dtr.Blazor.HotReload.csproj" />
+	</ItemGroup>
+	<ItemGroup>
+		<!-- To compile two versions of the same types in the tests -->
+		<PackageReference Include="Microsoft.CodeAnalysis.CSharp" />
+		<PackageReference Include="Microsoft.NET.Test.Sdk" />
+		<PackageReference Include="MSTest.TestAdapter" />
+		<PackageReference Include="MSTest.TestFramework" />
+	</ItemGroup>
+</Project>
