@@ -1,3 +1,4 @@
+using Dtr.Blazor.HotReload.State;
 using Microsoft.AspNetCore.Components;
 using Microsoft.AspNetCore.Components.WebAssembly.Hosting;
 using Microsoft.Extensions.Configuration;
@@ -98,6 +99,9 @@ public static class HotReloadHostBuilderExtensions
 
 		// Available from both the host tier and every app generation (instances are forwarded as-is).
 		builder.Services.AddSingleton(runtime);
+
+		// Lets new components pick up the state of their predecessors after a full swap.
+		builder.Services.AddSingleton<IComponentActivator>(new HotReloadComponentActivator(runtime));
 
 		// Let the host builder create the root provider through the runtime, so it can swap the app's services later.
 		builder.ConfigureContainer(new HotReloadServiceProviderFactory(runtime));

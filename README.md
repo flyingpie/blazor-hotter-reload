@@ -1,8 +1,8 @@
 # Dtr.Blazor.HotReload
 
 Hot reload for Blazor WebAssembly apps that applies (almost) any change within ~1-2 seconds, without rebuilding, restarting,
-or reloading the page. Most changes are applied in place, keeping all state; for the rest, a new version of the app is swapped in.
-Changes in the libraries the app uses (its project references) are hot reloaded too.
+or reloading the page. Most changes are applied in place, keeping all state; for the rest, a new version of the app is swapped in,
+carrying over what state it can. Changes in the libraries the app uses (its project references) are hot reloaded too.
 
 Two packages:
 
@@ -19,7 +19,7 @@ Requires .NET 10 (SDK and app).
 
    ```xml
    <ItemGroup Condition="'$(Configuration)' == 'Debug'">
-     <PackageReference Include="Dtr.Blazor.HotReload" Version="0.1.1" />
+     <PackageReference Include="Dtr.Blazor.HotReload" Version="0.1.2" />
    </ItemGroup>
    ```
 
@@ -103,7 +103,7 @@ The approach is the same as [s&box's hotload](https://github.com/Facepunch/sbox-
 1. **In place** (fast path, keeps all state): the change is turned into an Edit-and-Continue delta, and the running assemblies are patched.
    This is the same engine `dotnet watch` uses. It covers changes to method bodies, Razor markup and lambdas, and most added members and types.
 2. **Full swap** (for everything else, e.g. "rude edits" like removing members, or changes to service registrations): a complete new version
-   of the app is compiled and loaded next to the old one, as a new **app generation**, which starts the app over.
+   of the app is compiled and loaded next to the old one, as a new **app generation**. State is carried over where possible (see below).
 
 ### Server (`dtr-blazor-hotreload`, on the dev machine)
 
@@ -127,23 +127,37 @@ The approach is the same as [s&box's hotload](https://github.com/Facepunch/sbox-
 - **Full swaps** load the new assemblies together into a fresh `AssemblyLoadContext` (so the new app binds to the new versions of its libraries), then:
   - create a new DI container by calling `ConfigureServices` from the *new* assembly, then `InitializeServices`;
   - swap that container in, behind the service provider that Blazor uses;
-  - re-render the root (`HotReloadRoot` takes the place of the app's root component) with the new root component.
+  - carry over state, then re-render the root (`HotReloadRoot` takes the place of the app's root component) with the new root component.
 
 ## What you get
 
 | Change | Result |
 | --- | --- |
 | Method bodies, Razor markup, lambdas, added fields/methods/types (in the app or its libraries) | In place, all state kept (~0.5 s) |
-| Other changes in the app or its libraries: removed/renamed members, changed signatures, renamed enum values, DI registrations, ... | Full swap, app restarted (~1-2 s) |
+| Other changes in the app or its libraries: removed/renamed members, changed signatures, renamed enum values, DI registrations, ... | Full swap, state carried over where possible (~1-2 s) |
 | `wwwroot/**/*.css` | Hot (stylesheet is re-fetched) |
 | Other `wwwroot` files (`index.html`, `app.js`, ...) | Page reload |
 | Compile error (in any of the projects) | Overlay with the errors; the app keeps running the previous version |
 | Unhandled exception while rendering | Shown in place of the app; fix it and save |
 | Packages, csproj, or anything generated at build time only | Needs a regular build. The server notices, restarts the dev server (with `--devserver`), and reloads the page |
 
-The overlay tells which one happened ("applied in place, state kept", or "app restarted").
+The overlay tells which one happened ("applied in place, state kept", or "app restarted, state carried over ...").
 
-**Full swaps don't keep state**: the new version starts the app over, in-memory component and service state (including static fields) is reset.
+### State carry-over (full swaps)
+
+Best effort, like s&box's object migration. Values are converted to the new versions of their types, field by field (by name):
+
+- **Static fields** of the swapped types.
+- **Services**: the app's singletons and scoped services that the previous generation created get the fields of their predecessors.
+  References to old services are replaced by the new instances (so nothing holds on to the old container).
+- **Components**: when the new tree is rendered, each new component is matched with an old one of the same type, in creation order,
+  and gets its fields before parameters are set and `OnInitialized` runs. `[Parameter]`, `[CascadingParameter]` and `[Inject]` members are left to Blazor.
+  Components that load data in `OnInitialized(Async)` still do so (and overwrite what was carried over), but UI state like selections and unsaved input is kept.
+
+Not carried over: fields whose type changed in an incompatible way, delegates/event handlers (the new code subscribes again), tasks,
+`CancellationTokenSource`s, JS object references, `ElementReference`s, component references (`@ref`), and objects of types that no longer exist.
+Third-party services start fresh. If the component structure changed, the matching by creation order can be off.
+
 If a library needs static setup at startup, put it in `InitializeServices`, which runs for every generation.
 The URL, local storage, cookies and the login are always kept.
 
@@ -154,9 +168,9 @@ The URL, local storage, cookies and the login are always kept.
 - An in-place update doesn't re-run constructors or field initializers of existing objects (same as `dotnet watch`). Save the file with another change, or reload the page, to start them over.
 - Breakpoints only bind to the assembly the page started with. Reload the page to debug the latest code.
 - Blazor WebAssembly only (not Blazor Server, nor hybrid/desktop hosts).
-- Relies on internals: Roslyn's hot reload service (only visible to dotnet-watch, driven through reflection), and a few Blazor internals
-  (`RenderHandle._renderer`, `Renderer.ServiceProviderCascadingValueSuppliers`).
-  If an SDK/Blazor update changes those, hot reload falls back (full swaps only) or reports a clear error at startup.
+- Relies on internals: Roslyn's hot reload service (only visible to dotnet-watch, driven through reflection), and a few Blazor and DI internals
+  (`RenderHandle._renderer`, `Renderer.ServiceProviderCascadingValueSuppliers`, `Renderer._componentStateById`, the container's resolved services).
+  If an SDK/Blazor update changes those, hot reload falls back (full swaps only, or no state carry-over) or reports a clear error at startup.
 
 ## Files it leaves behind
 
@@ -171,3 +185,4 @@ dotnet pack Dtr.Blazor.HotReload.slnx -c Release    # -> artifacts/*.nupkg
 ```
 
 Bump `VersionPrefix` in `Directory.Build.props` for every release: NuGet caches packages by version, so a repacked package with the same version is not picked up.
+`test/Dtr.Blazor.HotReload.UnitTest` covers the state conversion (two versions of the same types, compiled and loaded side by side).

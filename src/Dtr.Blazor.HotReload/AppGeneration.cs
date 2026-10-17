@@ -1,11 +1,13 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
+using System.Runtime.Loader;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace Dtr.Blazor.HotReload;
 
 /// <summary>
 /// One version of the app: its assemblies, plus the DI container that was built from them.
-/// Every full swap creates a new generation, and throws away the old one.
+/// Every full swap creates a new generation, and throws away the old one (after carrying over what state it can).
 /// </summary>
 public sealed class AppGeneration : IAsyncDisposable
 {
@@ -40,6 +42,25 @@ public sealed class AppGeneration : IAsyncDisposable
 	/// Blazor WebAssembly only uses a single scope, this is it.
 	/// </summary>
 	public IServiceProvider Services => _scope.ServiceProvider;
+
+	/// <summary>
+	/// The DI container's root and the scope, i.e. what holds the created singletons and scoped services.
+	/// </summary>
+	[SuppressMessage("Major Code Smell", "S3011:Reflection should not be used to increase accessibility", Justification = "DI internals")]
+	internal IEnumerable<object> EngineScopes =>
+		new[]
+		{
+			typeof(ServiceProvider).GetProperty("Root", BindingFlags.Instance | BindingFlags.NonPublic)?.GetValue(_provider),
+			_scope.ServiceProvider,
+		}.OfType<object>();
+
+	/// <summary>
+	/// The version of an assembly that this generation uses: its own, or the one the page started with.
+	/// </summary>
+	public Assembly? GetAssembly(string name) =>
+		Assemblies.TryGetValue(name, out var assembly)
+			? assembly
+			: AssemblyLoadContext.Default.Assemblies.FirstOrDefault(a => a.GetName().Name == name);
 
 	/// <summary>
 	/// Disposes the scope first, then the root container. Both only contain this generation's services; forwarded host-tier

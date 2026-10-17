@@ -79,6 +79,9 @@ public sealed class HotReloadRoot : IComponent, IDisposable
 	/// </summary>
 	internal Task RenderGenerationAsync() => _renderHandle.Dispatcher.InvokeAsync(Render);
 
+	/// <summary>
+	/// <see cref="RenderHandle"/> doesn't expose its renderer, but the runtime needs it to find and replace components.
+	/// </summary>
 	private static Renderer GetRenderer(RenderHandle handle)
 	{
 		var field =
@@ -118,7 +121,7 @@ public sealed class HotReloadRoot : IComponent, IDisposable
 
 	/// <summary>
 	/// Renders the current generation's root inside an error boundary. The key changes with the generation, so Blazor treats
-	/// it as a new subtree: the old components are disposed and the new ones are created.
+	/// it as a new subtree: the old components are disposed and the new ones are created (and get carried-over state).
 	/// </summary>
 	private void BuildRenderTree(RenderTreeBuilder builder)
 	{
