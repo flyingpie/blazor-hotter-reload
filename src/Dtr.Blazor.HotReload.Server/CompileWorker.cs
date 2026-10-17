@@ -1,12 +1,18 @@
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
+using System.Text.Json;
 using Dtr.Blazor.HotReload.Server.Compiling;
+using Dtr.Blazor.HotReload.Server.Deltas;
 
 namespace Dtr.Blazor.HotReload.Server;
 
 /// <summary>
 /// Watches the app project and the libraries it ships to the browser, and turns file changes into updates for the browser:
-/// a new generation of the app, compiled from scratch.
+/// <list type="number">
+/// <item>Preferably an in-place update (Edit-and-Continue delta): the running app is patched, and keeps all its state.</item>
+/// <item>Otherwise (e.g. "rude edits" like a changed method signature, or changes to the service registrations), a full swap:
+/// a new generation of the app, compiled from scratch.</item>
+/// </list>
 /// All the work happens on a single loop, so changes are handled one batch at a time.
 /// </summary>
 [SuppressMessage("Design", "CA1031:Do not catch general exception types", Justification = "The watcher should keep running")]
@@ -21,17 +27,22 @@ internal sealed class CompileWorker : IDisposable
 	private readonly ProjectLocation _location;
 	private readonly HotReloadHub _hub;
 	private readonly string _wwwroot;
+	private readonly string _baselineDirectory;
 	private readonly Lock _lock = new();
 	private readonly SemaphoreSlim _signal = new(0);
 	private readonly HashSet<string> _changedCss = new(StringComparer.Ordinal);
 	private readonly HashSet<string> _changedProjects = new(StringComparer.Ordinal);
+	private readonly HashSet<string> _changedFiles = new(StringComparer.Ordinal);
 	private readonly List<FileSystemWatcher> _watchers = [];
 	private readonly DevServerProcess? _devServer;
 
 	private List<ProjectState> _projects = [];
 	private HotSolution? _solution;
+	private DeltaSession? _deltas;
+	private string? _capabilities;
 	private bool _assetsChanged;
 	private bool _buildChanged;
+	private bool _fullSwapRequested;
 	private Timer? _debounce;
 
 	public CompileWorker(ProjectLocation location, HotReloadHub hub, DevServerProcess? devServer)
@@ -40,6 +51,8 @@ internal sealed class CompileWorker : IDisposable
 		_hub = hub;
 		_devServer = devServer;
 		_wwwroot = Path.Combine(location.ProjectDirectory, "wwwroot");
+		_baselineDirectory = Path.Combine(Path.GetDirectoryName(location.IntermediateAssembly)!, "dtr-hotreload");
+		_hub.ClientMessage += OnClientMessage;
 	}
 
 	/// <summary>
@@ -57,30 +70,40 @@ internal sealed class CompileWorker : IDisposable
 			// The file watchers and the WebSocket handlers add to the changed sets under _lock. Take a snapshot and reset
 			// the sets, so changes that arrive while we compile are handled in the next iteration.
 			bool assets,
-				build;
+				build,
+				fullSwap;
 			string[] css,
-				changedProjects;
+				changedProjects,
+				changedFiles;
+			string? capabilities;
 			lock (_lock)
 			{
-				(assets, build) = (_assetsChanged, _buildChanged);
+				(assets, build, fullSwap, capabilities) = (_assetsChanged, _buildChanged, _fullSwapRequested, _capabilities);
 				css = [.. _changedCss];
 				changedProjects = [.. _changedProjects];
-				_assetsChanged = _buildChanged = false;
+				changedFiles = [.. _changedFiles];
+				_assetsChanged = _buildChanged = _fullSwapRequested = false;
 				_changedCss.Clear();
 				_changedProjects.Clear();
+				_changedFiles.Clear();
 			}
 
 			try
 			{
+				if (capabilities is not null && _deltas is { HasCapabilities: false })
+				{
+					_deltas.SetCapabilities(capabilities);
+				}
+
 				if (build)
 				{
 					await OnBuildAsync(token).ConfigureAwait(false);
 					continue;
 				}
 
-				if (changedProjects.Length > 0)
+				if (changedProjects.Length > 0 || fullSwap)
 				{
-					await CompileAsync(changedProjects).ConfigureAwait(false);
+					await CompileAsync(changedProjects, changedFiles, fullSwap).ConfigureAwait(false);
 				}
 
 				foreach (var path in css)
@@ -104,6 +127,7 @@ internal sealed class CompileWorker : IDisposable
 
 	public void Dispose()
 	{
+		_hub.ClientMessage -= OnClientMessage;
 		_watchers.ForEach(w => w.Dispose());
 		_debounce?.Dispose();
 		_signal.Dispose();
@@ -132,6 +156,16 @@ internal sealed class CompileWorker : IDisposable
 	}
 
 	/// <summary>
+	/// Changes to the service registrations can be applied in place, but that doesn't rebuild the DI container, so they need a full swap.
+	/// </summary>
+	private static bool TouchesServiceRegistrations(IEnumerable<string> files) =>
+		files.Any(file =>
+			Path.GetExtension(file) == ".cs"
+			&& File.Exists(file)
+			&& File.ReadAllText(file).Contains("IServiceCollection", StringComparison.Ordinal)
+		);
+
+	/// <summary>
 	/// A regular build of the app happened (which also builds the libraries): start over from its output.
 	/// </summary>
 	private async Task OnBuildAsync(CancellationToken token)
@@ -152,23 +186,49 @@ internal sealed class CompileWorker : IDisposable
 		}
 	}
 
+	/// <summary>
+	/// (Re)builds the project graph, the Roslyn workspace, and the delta session from the current build output.
+	/// </summary>
 	private async Task LoadProjectsAsync()
 	{
 		var stopwatch = Stopwatch.StartNew();
 		var projects = await ProjectGraph.LoadAsync(_location).ConfigureAwait(false);
 		Log.Info($"Projects: {string.Join(", ", projects.Select(p => p.Name))} ({stopwatch.ElapsedMilliseconds} ms)");
 
-		var solution = HotSolution.Create(projects);
+		// Baseline copies of generations are only valid for the build output they were created from.
+		if (Directory.Exists(_baselineDirectory))
+		{
+			Directory.Delete(_baselineDirectory, recursive: true);
+		}
+
+		var solution = HotSolution.Create(projects, _location.IntermediateAssembly);
 		await solution.WarmUpAsync().ConfigureAwait(false);
+
+		// The browser runs the build output, which is the baseline for the in-place updates.
+		var deltas = DeltaSession.TryCreate(solution.Solution.Services);
+		if (deltas is not null)
+		{
+			if (_capabilities is not null)
+			{
+				deltas.SetCapabilities(_capabilities);
+			}
+
+			await deltas.StartAsync(solution.Solution).ConfigureAwait(false);
+		}
 
 		lock (_lock)
 		{
 			_projects = [.. projects.Select(p => new ProjectState(p))];
 			_solution = solution;
+			_deltas = deltas;
 		}
 	}
 
-	private async Task CompileAsync(IReadOnlyCollection<string> changedProjects)
+	/// <summary>
+	/// Handles a source change: try an in-place update first, and fall back to a full swap when the delta engine can't apply
+	/// it (or when the change touches service registrations).
+	/// </summary>
+	private async Task CompileAsync(IReadOnlyCollection<string> changedProjects, IReadOnlyCollection<string> changedFiles, bool fullSwap)
 	{
 		var stopwatch = Stopwatch.StartNew();
 
@@ -182,6 +242,49 @@ internal sealed class CompileWorker : IDisposable
 			project.ChangedSinceBuild = true;
 		}
 
+		if (!fullSwap && _deltas is { HasCapabilities: true } && !TouchesServiceRegistrations(changedFiles))
+		{
+			_hub.Broadcast(new { type = "compiling" });
+			var result = await _deltas.GetUpdatesAsync(_solution.Solution, _solution.ProjectIds).ConfigureAwait(false);
+			switch (result.Status)
+			{
+				case DeltaStatus.NoChanges:
+					Log.Info($"No changes to apply ({stopwatch.ElapsedMilliseconds} ms)");
+					_hub.Broadcast(new { type = "nochanges" });
+					return;
+
+				case DeltaStatus.Ready:
+					_deltas.Commit();
+					var sequence = _hub.PublishDelta(result.Updates);
+					foreach (var update in result.Updates)
+					{
+						_projects.Single(p => p.Project == _solution.GetProject(update.ProjectId)).ChangedSinceBuild = true;
+					}
+
+					changed.ForEach(p => p.HasErrors = false);
+					var names = string.Join(", ", result.Updates.Select(u => _solution.GetProject(u.ProjectId).Name));
+					Log.Success(
+						$"Update {_hub.Generation}.{sequence} applied in place ({names}) in {stopwatch.ElapsedMilliseconds} ms, sent to {_hub.ClientCount} browser(s)"
+					);
+					return;
+
+				case DeltaStatus.CompileErrors:
+					// Either the code doesn't compile, or the delta can't be emitted for this runtime (e.g. CS9346: an update that needs
+					// an explicit interface implementation, which the WebAssembly runtime can't add). The full compile tells which:
+					// it reports the errors in the first case, and swaps the app in the second.
+					var errors = result.Diagnostics.Where(DeltaSession.IsCompileError).Select(d => $"{d.Id}: {d.GetMessage(System.Globalization.CultureInfo.InvariantCulture)}");
+					Log.Info($"Can't be applied in place, compiling the whole app: {string.Join("; ", errors.Distinct().Take(3))}");
+					break;
+
+				default:
+					var rudeEdits = result
+						.Diagnostics.Where(d => d.Id.StartsWith("ENC", StringComparison.Ordinal))
+						.Select(d => d.GetMessage(System.Globalization.CultureInfo.InvariantCulture));
+					Log.Info($"Can't be applied in place, restarting the app: {string.Join("; ", rudeEdits.Distinct().Take(3))}");
+					break;
+			}
+		}
+
 		await FullSwapAsync(changed, stopwatch).ConfigureAwait(false);
 	}
 
@@ -192,8 +295,8 @@ internal sealed class CompileWorker : IDisposable
 	{
 		_hub.Broadcast(new { type = "compiling" });
 
-		// Shipped: the app, and every library whose code differs from the build output, plus libraries that depend on those
-		// (so they bind to the new versions too). _projects is in dependency order, so one pass is enough.
+		// Shipped: the app, and every library whose code differs from the build output (including in-place updates), plus libraries that
+		// depend on those (so they bind to the new versions too). _projects is in dependency order, so one pass is enough.
 		var shipped = new List<ProjectState>();
 		foreach (var project in _projects)
 		{
@@ -231,6 +334,24 @@ internal sealed class CompileWorker : IDisposable
 		changed.ForEach(p => p.HasErrors = false);
 		var generation = _hub.Publish(results);
 
+		// What the client now runs, is the baseline for the next in-place updates. Write the exact bytes that were sent to
+		// disk; the delta engine needs the matching PDB to compute updates against this generation.
+		if (_deltas is not null)
+		{
+			var directory = Path.Combine(_baselineDirectory, generation.ToString(System.Globalization.CultureInfo.InvariantCulture));
+			Directory.CreateDirectory(directory);
+			foreach (var project in shipped)
+			{
+				var result = results[project.Project.AssemblyName];
+				var assemblyPath = Path.Combine(directory, project.Project.AssemblyName + ".dll");
+				await File.WriteAllBytesAsync(assemblyPath, result.Assembly!).ConfigureAwait(false);
+				await File.WriteAllBytesAsync(Path.ChangeExtension(assemblyPath, ".pdb"), result.Symbols!).ConfigureAwait(false);
+				_solution!.SetBaseline(project.Project, assemblyPath);
+			}
+
+			await _deltas.StartAsync(_solution!.Solution).ConfigureAwait(false);
+		}
+
 		Log.Success(
 			$"Generation {generation} compiled in {stopwatch.ElapsedMilliseconds} ms ({string.Join(", ", shipped.Select(p => p.Project.Name))}), "
 				+ $"app restarted in {_hub.ClientCount} browser(s)"
@@ -246,6 +367,48 @@ internal sealed class CompileWorker : IDisposable
 		}
 
 		_hub.Broadcast(new { type = "errors", diagnostics = errors });
+	}
+
+	/// <summary>
+	/// Handles the two kinds of client messages that affect compilation: what the runtime can apply, and requests for a full
+	/// swap. The caller signals the worker loop after a request.
+	/// </summary>
+	private void OnClientMessage(string type, JsonElement message)
+	{
+		lock (_lock)
+		{
+			switch (type)
+			{
+				case "capabilities":
+					// The first client that reports capabilities sets them; all clients in one app share the runtime, but a
+					// reloaded page may connect before the old one disconnects.
+					var supported = message.TryGetProperty("supported", out var s) && s.GetBoolean();
+					var capabilities = message.TryGetProperty("capabilities", out var c) ? c.GetString() : null;
+					Log.Info($"Browser supports in-place updates: {supported}{(supported ? $" ({capabilities})" : string.Empty)}");
+					if (!supported || string.IsNullOrWhiteSpace(capabilities) || _capabilities is not null)
+					{
+						return;
+					}
+
+					_capabilities = capabilities;
+					break;
+
+				case "delta-failed":
+				case "restart":
+					Log.Warning(
+						type == "restart"
+							? "Restart requested by the browser"
+							: "The browser could not apply an in-place update, restarting the app"
+					);
+					_fullSwapRequested = true;
+					break;
+
+				default:
+					return;
+			}
+		}
+
+		_signal.Release();
 	}
 
 	/// <summary>
@@ -330,6 +493,7 @@ internal sealed class CompileWorker : IDisposable
 			{
 				// Also directories: a deleted/renamed directory takes its files with it.
 				_changedProjects.Add(project.Project.ProjectFile);
+				_changedFiles.Add(path);
 			}
 			else if (extension is ".csproj" or ".props" or ".targets")
 			{
@@ -378,7 +542,7 @@ internal sealed class CompileWorker : IDisposable
 		public bool HasErrors { get; set; }
 
 		/// <summary>
-		/// Whether the browser runs a different version of this project than the build output.
+		/// Whether the browser runs a different version of this project than the build output (through in-place updates or a full swap).
 		/// </summary>
 		public bool ChangedSinceBuild { get; set; }
 	}

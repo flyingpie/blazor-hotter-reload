@@ -2,11 +2,12 @@ using System.Net.WebSockets;
 using System.Text.Json;
 using System.Threading.Channels;
 using Dtr.Blazor.HotReload.Server.Compiling;
+using Dtr.Blazor.HotReload.Server.Deltas;
 
 namespace Dtr.Blazor.HotReload.Server;
 
 /// <summary>
-/// The compiled generations, and the browsers that are connected to us.
+/// The compiled generations, and the clients that are connected to us.
 /// </summary>
 internal sealed class HotReloadHub
 {
@@ -18,6 +19,16 @@ internal sealed class HotReloadHub
 	private readonly Dictionary<int, Dictionary<string, (byte[] Assembly, byte[] Symbols)>> _generations = [];
 	private readonly List<Client> _clients = [];
 	private readonly HashSet<string> _changedCss = new(StringComparer.Ordinal);
+
+	/// <summary>
+	/// The in-place updates (Edit-and-Continue deltas) on top of the current generation, in order.
+	/// </summary>
+	private readonly List<object> _deltas = [];
+
+	/// <summary>
+	/// A message from a client: its type, and the whole message.
+	/// </summary>
+	public event Action<string, JsonElement>? ClientMessage;
 
 	/// <summary>
 	/// Changes whenever we start over from a new build output (generation 0), so clients can tell that numbers have been reset.
@@ -47,6 +58,7 @@ internal sealed class HotReloadHub
 		int generation;
 		lock (_lock)
 		{
+			// A new generation invalidates the deltas that were on top of the previous one.
 			generation = ++Generation;
 			_generations[generation] = assemblies.ToDictionary(
 				a => a.Key,
@@ -54,6 +66,7 @@ internal sealed class HotReloadHub
 				StringComparer.OrdinalIgnoreCase
 			);
 			_generations.Remove(generation - GenerationsToKeep);
+			_deltas.Clear();
 		}
 
 		Broadcast(
@@ -68,7 +81,8 @@ internal sealed class HotReloadHub
 	}
 
 	/// <summary>
-	/// Back to the assembly of the build output.
+	/// Back to the assembly of the build output: forget all generations and deltas, and start a new session, so connected
+	/// clients know that generation numbers restarted and that they need to resync (or reload).
 	/// </summary>
 	public void Reset()
 	{
@@ -78,11 +92,48 @@ internal sealed class HotReloadHub
 			Generation = 0;
 			_generations.Clear();
 			_changedCss.Clear();
+			_deltas.Clear();
 		}
 	}
 
 	/// <summary>
-	/// The DevServer keeps serving static assets with the ETag of the last build, so after a page reload, the browser would use its
+	/// Publishes in-place updates for the current generation. Returns the sequence number of the delta within the generation.
+	/// </summary>
+	public int PublishDelta(IReadOnlyList<DeltaUpdate> updates)
+	{
+		ArgumentNullException.ThrowIfNull(updates);
+
+		object message;
+		int sequence;
+		lock (_lock)
+		{
+			sequence = _deltas.Count + 1;
+			message = new
+			{
+				type = "delta",
+				session = Session,
+				generation = Generation,
+				sequence,
+				updates = updates
+					.Select(u => new
+					{
+						moduleId = u.ModuleId,
+						metadata = u.Metadata,
+						il = u.IL,
+						pdb = u.Pdb,
+						updatedTypes = u.UpdatedTypes,
+					})
+					.ToList(),
+			};
+			_deltas.Add(message);
+		}
+
+		Broadcast(message);
+		return sequence;
+	}
+
+	/// <summary>
+	/// The DevServer keeps serving static assets with the ETag of the last build, so after a page reload, the client would use its
 	/// cached (old) version. So we remember which stylesheets changed, and tell new clients to fetch them again.
 	/// </summary>
 	public void PublishCss(string path)
@@ -144,6 +195,7 @@ internal sealed class HotReloadHub
 				session = Session,
 				generation = Generation,
 				assemblies = _generations.TryGetValue(Generation, out var assemblies) ? assemblies.Keys.ToList() : [],
+				deltas = _deltas.ToList(),
 				css = _changedCss.ToList(),
 			};
 			client.Send(JsonSerializer.SerializeToUtf8Bytes(hello, JsonOptions));
@@ -153,8 +205,10 @@ internal sealed class HotReloadHub
 		Log.Info($"Browser connected ({ClientCount} total)");
 		try
 		{
-			// The browser doesn't send anything (yet), this just waits for it to go away.
+			// Client messages are small JSON objects; a WebSocket message may still be split into multiple frames, so collect
+			// them until EndOfMessage.
 			var buffer = new byte[4096];
+			using var message = new MemoryStream();
 			while (socket.State == WebSocketState.Open && !token.IsCancellationRequested)
 			{
 				var result = await socket.ReceiveAsync(buffer, token).ConfigureAwait(false);
@@ -162,6 +216,13 @@ internal sealed class HotReloadHub
 				{
 					await socket.CloseOutputAsync(WebSocketCloseStatus.NormalClosure, null, CancellationToken.None).ConfigureAwait(false);
 					break;
+				}
+
+				await message.WriteAsync(buffer.AsMemory(0, result.Count), token).ConfigureAwait(false);
+				if (result.EndOfMessage)
+				{
+					OnClientMessage(message.ToArray());
+					message.SetLength(0);
 				}
 			}
 		}
@@ -183,6 +244,26 @@ internal sealed class HotReloadHub
 	}
 
 	private static string NewSession() => Guid.NewGuid().ToString("N");
+
+	/// <summary>
+	/// Parses the message type and forwards the whole message. The <see cref="JsonElement"/> is cloned because the document is
+	/// disposed when this method returns.
+	/// </summary>
+	private void OnClientMessage(byte[] payload)
+	{
+		try
+		{
+			using var json = JsonDocument.Parse(payload);
+			if (json.RootElement.TryGetProperty("type", out var type) && type.GetString() is { } name)
+			{
+				ClientMessage?.Invoke(name, json.RootElement.Clone());
+			}
+		}
+		catch (JsonException ex)
+		{
+			Log.Warning($"Invalid message from browser: {ex.Message}");
+		}
+	}
 
 	/// <summary>
 	/// A WebSocket only allows one send at a time, so messages are queued, and sent by a single loop.

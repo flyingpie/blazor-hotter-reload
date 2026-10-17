@@ -90,8 +90,14 @@ public sealed class HotReloadRoot : IComponent, IDisposable
 		return (Renderer)field.GetValue(handle)!;
 	}
 
-	private static void BuildErrorContent(RenderTreeBuilder builder, Exception exception)
+	/// <summary>
+	/// Replaces the app with a readable error and a way out. The runtime uses the exception to detect stale code after an
+	/// in-place update and to request a full swap.
+	/// </summary>
+	private void BuildErrorContent(RenderTreeBuilder builder, Exception exception)
 	{
+		Runtime.OnUnhandledException(exception);
+
 		builder.OpenElement(0, "div");
 		builder.AddAttribute(
 			1,
