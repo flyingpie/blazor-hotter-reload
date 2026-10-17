@@ -38,7 +38,7 @@ internal sealed class HotReloadHub
 	}
 
 	/// <summary>
-	/// Publishes a new generation of the app.
+	/// Publishes a new generation: the app assembly, plus all libraries that changed since the last build.
 	/// </summary>
 	public int Publish(IReadOnlyDictionary<string, CompileResult> assemblies)
 	{

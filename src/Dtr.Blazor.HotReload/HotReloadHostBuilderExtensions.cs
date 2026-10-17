@@ -20,9 +20,15 @@ public static class HotReloadHostBuilderExtensions
 	/// A static method in the app assembly that registers the app services.
 	/// On every hot reload, the method with the same name on the type with the same name is looked up in the new app assembly, and invoked.
 	/// </param>
+	/// <param name="initializeServices">
+	/// Optional static method (on the same type as <paramref name="configureServices"/>) that initializes static state, once the services
+	/// have been built, e.g. <c>Log.Setup(...)</c>. Hot reloaded libraries start out with fresh static state, so this is called for every new
+	/// generation. The app itself still needs to call it once, for the services it starts with.
+	/// </param>
 	public static WebAssemblyHostBuilder UseHotReload(
 		this WebAssemblyHostBuilder builder,
-		Action<IServiceCollection, IConfiguration, IWebAssemblyHostEnvironment> configureServices
+		Action<IServiceCollection, IConfiguration, IWebAssemblyHostEnvironment> configureServices,
+		Action<IServiceProvider>? initializeServices = null
 	)
 	{
 		ArgumentNullException.ThrowIfNull(builder);
@@ -35,6 +41,17 @@ public static class HotReloadHostBuilderExtensions
 			throw new ArgumentException(
 				"The service configuration needs to be a static method, so it can be found in new versions of the app assembly.",
 				nameof(configureServices)
+			);
+		}
+
+		if (
+			initializeServices is not null
+			&& (!initializeServices.Method.IsStatic || initializeServices.Method.DeclaringType != method.DeclaringType)
+		)
+		{
+			throw new ArgumentException(
+				$"The initialization needs to be a static method on '{method.DeclaringType}', so it can be found in new versions of the app assembly.",
+				nameof(initializeServices)
 			);
 		}
 
@@ -72,7 +89,7 @@ public static class HotReloadHostBuilderExtensions
 		}
 
 		var runtime = new HotReloadRuntime(
-			new AppEntryPoint(method.DeclaringType.FullName!, method.Name),
+			new AppEntryPoint(method.DeclaringType.FullName!, method.Name, initializeServices?.Method.Name),
 			appAssembly,
 			builder.Configuration,
 			builder.HostEnvironment,

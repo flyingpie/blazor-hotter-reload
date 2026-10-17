@@ -92,8 +92,10 @@ public sealed class HotReloadRuntime : IAsyncDisposable
 			var loadContext = new GenerationLoadContext(number, assemblies);
 			var newAssembly = loadContext.Get(_initialAssembly.GetName().Name!);
 
-			var next = BuildGeneration(number, newAssembly);
+			var next = BuildGeneration(number, newAssembly, loadContext.AssembliesByName);
 			var previous = Current;
+
+			InvokeInitializeServices(next);
 
 			// From here on, service resolutions and renders use the new generation.
 			_current = next;
@@ -160,7 +162,11 @@ public sealed class HotReloadRuntime : IAsyncDisposable
 		_hostScope = _hostProvider.CreateAsyncScope();
 
 		// Generation 0 is built the exact same way as all the next ones, so problems with that show up right away.
-		_current = BuildGeneration(0, _initialAssembly);
+		_current = BuildGeneration(
+			0,
+			_initialAssembly,
+			new Dictionary<string, Assembly>(StringComparer.OrdinalIgnoreCase) { [_initialAssembly.GetName().Name!] = _initialAssembly }
+		);
 
 		return new SwappableServiceProvider(this, isRoot: true);
 	}
@@ -189,6 +195,10 @@ public sealed class HotReloadRuntime : IAsyncDisposable
 
 	internal void Detach(HotReloadRoot root) => _roots.Remove(root);
 
+	/// <summary>
+	/// Resolves the root component by name in the current generation. Generations load their own copies of the app and changed
+	/// libraries, so the type must not be cached: every swap may bring a new version.
+	/// </summary>
 	internal Type GetRootType(string typeName) =>
 		Current.Assembly.GetType(typeName, throwOnError: false)
 		?? throw new InvalidOperationException($"Root component '{typeName}' was not found in generation {Current.Number}.");
@@ -226,14 +236,14 @@ public sealed class HotReloadRuntime : IAsyncDisposable
 	/// <summary>
 	/// Builds one generation: a container with the host-tier services forwarded, plus the services that the app registers.
 	/// </summary>
-	private AppGeneration BuildGeneration(int number, Assembly assembly)
+	private AppGeneration BuildGeneration(int number, Assembly assembly, IReadOnlyDictionary<string, Assembly> assemblies)
 	{
 		var services = new ServiceCollection();
 
 		ForwardHostServices(services);
 		InvokeConfigureServices(assembly, services);
 
-		return new AppGeneration(number, assembly, services.BuildServiceProvider());
+		return new AppGeneration(number, assembly, assemblies, services.BuildServiceProvider());
 	}
 
 	/// <summary>
@@ -321,6 +331,32 @@ public sealed class HotReloadRuntime : IAsyncDisposable
 			);
 
 		Invoke(method, [services, _configuration, _environment]);
+	}
+
+	/// <summary>
+	/// Static state in a new generation's assemblies starts out fresh (e.g. <c>Dtr.Utils.Log</c>), give the app a chance to set it up.
+	/// Generation 0 is initialized by the app itself.
+	/// </summary>
+	private void InvokeInitializeServices(AppGeneration generation)
+	{
+		if (_entryPoint.InitializeMethodName is null)
+		{
+			return;
+		}
+
+		var method =
+			generation
+				.Assembly.GetType(_entryPoint.TypeName, throwOnError: false)
+				?.GetMethod(
+					_entryPoint.InitializeMethodName,
+					BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic,
+					[typeof(IServiceProvider)]
+				)
+			?? throw new InvalidOperationException(
+				$"Method '{_entryPoint.TypeName}.{_entryPoint.InitializeMethodName}' (with the original signature) was not found in the app assembly."
+			);
+
+		Invoke(method, [generation.Services]);
 	}
 
 	/// <summary>

@@ -5,7 +5,8 @@ using Dtr.Blazor.HotReload.Server.Compiling;
 namespace Dtr.Blazor.HotReload.Server;
 
 /// <summary>
-/// Watches the app project, and turns file changes into updates for the browser: a new generation of the app, compiled from scratch.
+/// Watches the app project and the libraries it ships to the browser, and turns file changes into updates for the browser:
+/// a new generation of the app, compiled from scratch.
 /// All the work happens on a single loop, so changes are handled one batch at a time.
 /// </summary>
 [SuppressMessage("Design", "CA1031:Do not catch general exception types", Justification = "The watcher should keep running")]
@@ -129,7 +130,7 @@ internal sealed class CompileWorker : IDisposable
 	}
 
 	/// <summary>
-	/// A regular build of the app happened: start over from its output.
+	/// A regular build of the app happened (which also builds the libraries): start over from its output.
 	/// </summary>
 	private async Task OnBuildAsync()
 	{
@@ -143,18 +144,9 @@ internal sealed class CompileWorker : IDisposable
 
 	private async Task LoadProjectsAsync()
 	{
-		HotProject[] projects =
-		[
-			new(
-				Path.GetFileNameWithoutExtension(_location.ProjectFile),
-				Path.GetFileNameWithoutExtension(_location.IntermediateAssembly),
-				_location.ProjectFile,
-				_location.ProjectDirectory,
-				_location.ResponseFile,
-				new HashSet<string>(StringComparer.Ordinal),
-				IsApp: true
-			),
-		];
+		var stopwatch = Stopwatch.StartNew();
+		var projects = await ProjectGraph.LoadAsync(_location).ConfigureAwait(false);
+		Log.Info($"Projects: {string.Join(", ", projects.Select(p => p.Name))} ({stopwatch.ElapsedMilliseconds} ms)");
 
 		var solution = HotSolution.Create(projects);
 		await solution.WarmUpAsync().ConfigureAwait(false);
@@ -170,21 +162,41 @@ internal sealed class CompileWorker : IDisposable
 	{
 		var stopwatch = Stopwatch.StartNew();
 
-		// Projects with errors from last time are included, so they get compiled once they're fixed.
+		// Projects with errors from last time are included, so their dependents get compiled once they're fixed.
 		var changed = _projects.Where(p => changedProjects.Contains(p.Project.ProjectFile) || p.HasErrors).ToList();
 		await _solution!.SyncAsync(changed.Select(p => p.Project)).ConfigureAwait(false);
+
+		// Even if this doesn't compile (e.g. a library change that breaks the app), the library has to be shipped once it does.
+		foreach (var project in changed.Where(p => !p.Project.IsApp))
+		{
+			project.ChangedSinceBuild = true;
+		}
 
 		await FullSwapAsync(changed, stopwatch).ConfigureAwait(false);
 	}
 
 	/// <summary>
-	/// Compiles a new generation of the app, and publishes it.
+	/// Compiles a new generation of the app, plus the libraries that changed since the last build (and their dependents), and publishes it.
 	/// </summary>
 	private async Task FullSwapAsync(List<ProjectState> changed, Stopwatch stopwatch)
 	{
 		_hub.Broadcast(new { type = "compiling" });
 
-		var shipped = _projects;
+		// Shipped: the app, and every library whose code differs from the build output, plus libraries that depend on those
+		// (so they bind to the new versions too). _projects is in dependency order, so one pass is enough.
+		var shipped = new List<ProjectState>();
+		foreach (var project in _projects)
+		{
+			if (
+				project.Project.IsApp
+				|| project.ChangedSinceBuild
+				|| changed.Contains(project)
+				|| shipped.Exists(s => project.Project.Dependencies.Contains(s.Project.ProjectFile))
+			)
+			{
+				shipped.Add(project);
+			}
+		}
 
 		var results = new Dictionary<string, CompileResult>(StringComparer.OrdinalIgnoreCase);
 		foreach (var project in shipped)
@@ -199,6 +211,11 @@ internal sealed class CompileWorker : IDisposable
 
 			project.HasErrors = false;
 			results[project.Project.AssemblyName] = result;
+		}
+
+		foreach (var project in shipped.Where(p => !p.Project.IsApp))
+		{
+			project.ChangedSinceBuild = true;
 		}
 
 		changed.ForEach(p => p.HasErrors = false);
@@ -343,5 +360,10 @@ internal sealed class CompileWorker : IDisposable
 		public HotProject Project { get; } = project;
 
 		public bool HasErrors { get; set; }
+
+		/// <summary>
+		/// Whether the browser runs a different version of this project than the build output.
+		/// </summary>
+		public bool ChangedSinceBuild { get; set; }
 	}
 }

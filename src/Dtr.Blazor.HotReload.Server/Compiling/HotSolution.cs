@@ -8,7 +8,7 @@ using Microsoft.CodeAnalysis.Text;
 namespace Dtr.Blazor.HotReload.Server.Compiling;
 
 /// <summary>
-/// A Roslyn workspace with the app project, kept in sync with the file system.
+/// A Roslyn workspace with the hot projects (the app and the libraries it ships), kept in sync with the file system.
 /// <para>
 /// Roslyn compiles incrementally: only changed documents are re-parsed, and the source generators (Razor!) run incrementally too.
 /// </para>
@@ -31,24 +31,52 @@ internal sealed class HotSolution
 
 	/// <summary>
 	/// Builds a workspace from the compiler command line of every hot project. The command lines come from the last real
-	/// build, so they match what the app is running.
+	/// build (or from a design-time compile for libraries), so they match what the app is running.
 	/// </summary>
 	public static HotSolution Create(IReadOnlyList<HotProject> projects)
 	{
 		var workspace = new AdhocWorkspace();
 
 		var entries = new Dictionary<string, Entry>(StringComparer.Ordinal);
-		var solution = workspace.CurrentSolution;
+		var infos = new List<ProjectInfo>();
 		foreach (var project in projects)
 		{
 			var inputs = ProjectInputs.Load(project.ResponseFile, project.ProjectDirectory);
 			var args = File.ReadAllLines(project.ResponseFile);
 			var info = CommandLineProject.CreateProjectInfo(project.Name, LanguageNames.CSharp, args, project.ProjectDirectory, workspace);
 
-			solution = solution.AddProject(info);
+			infos.Add(info);
 			entries[project.ProjectFile] = new Entry(project, inputs, info.Id);
 		}
 
+		// References to the other hot projects' (reference) assemblies become project references, so Roslyn compiles them
+		// together and a change in a library flows into the app without an intermediate binary.
+		var idsByAssembly = entries.Values.ToDictionary(e => e.Project.AssemblyName, e => e.Id, StringComparer.OrdinalIgnoreCase);
+		for (var i = 0; i < infos.Count; i++)
+		{
+			var info = infos[i];
+			var projectReferences = new List<ProjectReference>();
+			var metadataReferences = new List<MetadataReference>();
+			foreach (var reference in info.MetadataReferences)
+			{
+				if (
+					reference is PortableExecutableReference { FilePath: { } path }
+					&& idsByAssembly.TryGetValue(Path.GetFileNameWithoutExtension(path), out var id)
+					&& id != info.Id
+				)
+				{
+					projectReferences.Add(new ProjectReference(id));
+				}
+				else
+				{
+					metadataReferences.Add(reference);
+				}
+			}
+
+			infos[i] = info.WithMetadataReferences(metadataReferences).WithProjectReferences(projectReferences);
+		}
+
+		var solution = infos.Aggregate(workspace.CurrentSolution, (s, info) => s.AddProject(info));
 		return new HotSolution(solution, entries);
 	}
 
