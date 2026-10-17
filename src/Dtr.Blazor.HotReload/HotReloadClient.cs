@@ -164,7 +164,11 @@ internal sealed class HotReloadClient : IAsyncDisposable
 
 			case "rebuilt":
 				_runtime.SetStatus(
-					new HotReloadStatus(HotReloadStatusKind.Failed, "The app was rebuilt: restart the dev server and reload the page", [])
+					new HotReloadStatus(
+						HotReloadStatusKind.Failed,
+						"The app was rebuilt: restart the dev server and reload the page (or run dtr-blazor-hotreload with --devserver)",
+						[]
+					)
 				);
 				break;
 
