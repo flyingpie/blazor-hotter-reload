@@ -9,7 +9,8 @@ using Microsoft.JSInterop;
 namespace Dtr.Blazor.HotReload;
 
 /// <summary>
-/// Talks to the hot reload server over a WebSocket, and applies what it sends: complete new generations of the app.
+/// Talks to the hot reload server over a WebSocket, and applies what it sends:
+/// in-place updates (deltas, which keep all state), or complete new generations of the app.
 /// </summary>
 [SuppressMessage("Design", "CA1031:Do not catch general exception types", Justification = "Hot reload must never take down the app")]
 internal sealed class HotReloadClient : IAsyncDisposable
@@ -25,8 +26,10 @@ internal sealed class HotReloadClient : IAsyncDisposable
 
 	private string? _session;
 	private int _serverGeneration;
+	private int _appliedDeltas;
 	private bool _reportedUnreachable;
 	private Task? _loop;
+	private ClientWebSocket? _socket;
 	private IJSObjectReference? _module;
 
 	public HotReloadClient(HotReloadRuntime runtime, IServiceProvider hostServices)
@@ -40,9 +43,14 @@ internal sealed class HotReloadClient : IAsyncDisposable
 	/// <summary>
 	/// Whether this page runs anything else than the build output.
 	/// </summary>
-	private bool IsModified => _serverGeneration > 0 || _runtime.Current.Number > 0;
+	private bool IsModified => _serverGeneration > 0 || _appliedDeltas > 0 || _runtime.Current.Number > 0;
 
 	public void Start() => _loop = RunAsync(_stop.Token);
+
+	/// <summary>
+	/// Asks the server for a full swap (a new generation, compiled from scratch).
+	/// </summary>
+	public Task RequestRestartAsync() => SendAsync(new { type = "restart" });
 
 	public async ValueTask DisposeAsync()
 	{
@@ -82,6 +90,19 @@ internal sealed class HotReloadClient : IAsyncDisposable
 				Console.WriteLine($"[hotreload] Connected to {socketUrl}");
 				_reportedUnreachable = false;
 				delay = TimeSpan.FromMilliseconds(250);
+				_socket = socket;
+
+				// Tell the server what kind of in-place updates this runtime can apply.
+				var (supported, capabilities) = DeltaApplier.GetCapabilities();
+				await SendAsync(
+						new
+						{
+							type = "capabilities",
+							supported,
+							capabilities,
+						}
+					)
+					.ConfigureAwait(true);
 
 				await ReceiveLoopAsync(socket, token).ConfigureAwait(true);
 			}
@@ -99,9 +120,22 @@ internal sealed class HotReloadClient : IAsyncDisposable
 					);
 				}
 			}
+			finally
+			{
+				_socket = null;
+			}
 
 			await Task.Delay(delay, token).ConfigureAwait(true);
 			delay = TimeSpan.FromTicks(Math.Min(delay.Ticks * 2, MaxReconnectDelay.Ticks));
+		}
+	}
+
+	private async Task SendAsync(object message)
+	{
+		if (_socket is { State: WebSocketState.Open } socket)
+		{
+			var payload = JsonSerializer.SerializeToUtf8Bytes(message, JsonOptions);
+			await socket.SendAsync(payload, WebSocketMessageType.Text, endOfMessage: true, _stop.Token).ConfigureAwait(true);
 		}
 	}
 
@@ -146,8 +180,16 @@ internal sealed class HotReloadClient : IAsyncDisposable
 				_runtime.SetStatus(new HotReloadStatus(HotReloadStatusKind.Compiling, "Hot reload: compiling...", []));
 				break;
 
+			case "nochanges":
+				_runtime.SetStatus(new HotReloadStatus(HotReloadStatusKind.Applied, "Hot reload: no changes to apply", []));
+				break;
+
 			case "update":
 				await ApplyGenerationAsync(message.Generation, message.Assemblies).ConfigureAwait(true);
+				break;
+
+			case "delta":
+				await OnDeltaAsync(message).ConfigureAwait(true);
 				break;
 
 			case "errors":
@@ -183,7 +225,7 @@ internal sealed class HotReloadClient : IAsyncDisposable
 	}
 
 	/// <summary>
-	/// Catch up with the server: its current generation.
+	/// Catch up with the server: its current generation, plus the in-place updates on top of it.
 	/// </summary>
 	private async Task OnHelloAsync(ServerMessage message)
 	{
@@ -202,9 +244,73 @@ internal sealed class HotReloadClient : IAsyncDisposable
 			return;
 		}
 
-		if (message.Generation != _serverGeneration)
+		if (
+			message.Generation != _serverGeneration
+			&& !await ApplyGenerationAsync(message.Generation, message.Assemblies).ConfigureAwait(true)
+		)
 		{
-			await ApplyGenerationAsync(message.Generation, message.Assemblies).ConfigureAwait(true);
+			return;
+		}
+
+		foreach (var delta in message.Deltas ?? [])
+		{
+			if (delta.Sequence > _appliedDeltas && !await ApplyDeltaAsync(delta).ConfigureAwait(true))
+			{
+				return;
+			}
+		}
+	}
+
+	private async Task OnDeltaAsync(ServerMessage message)
+	{
+		if (message.Sequence <= _appliedDeltas && message.Generation == _serverGeneration)
+		{
+			return;
+		}
+
+		// Missed something (e.g. a generation that failed to load): let the server start a new generation.
+		if (message.Generation != _serverGeneration || message.Sequence != _appliedDeltas + 1)
+		{
+			Console.WriteLine(
+				$"[hotreload] Out of sync (at {_serverGeneration}.{_appliedDeltas}, got {message.Generation}.{message.Sequence})"
+			);
+			await SendAsync(new { type = "delta-failed" }).ConfigureAwait(true);
+			return;
+		}
+
+		await ApplyDeltaAsync(message).ConfigureAwait(true);
+	}
+
+	private async Task<bool> ApplyDeltaAsync(ServerMessage message)
+	{
+		// E.g. a page that was loaded before hot reload enabled in-place updates: a reload fixes that (the reloaded page catches up).
+		// Not a full swap, that would throw away the state of all the other pages.
+		if (!DeltaApplier.GetCapabilities().Supported)
+		{
+			if (!await ReloadOnceAsync($"unsupported-{message.Session}").ConfigureAwait(true))
+			{
+				_runtime.SetStatus(
+					new HotReloadStatus(HotReloadStatusKind.Failed, "Hot reload: this page can't apply in-place updates, reload it", [])
+				);
+			}
+
+			return false;
+		}
+
+		try
+		{
+			await _runtime.ApplyDeltaAsync(message.Updates ?? []).ConfigureAwait(true);
+			_appliedDeltas = message.Sequence;
+			return true;
+		}
+		catch (Exception ex)
+		{
+			Console.WriteLine($"[hotreload] Failed to apply update {message.Generation}.{message.Sequence} in place: {ex}");
+			_runtime.SetStatus(
+				new HotReloadStatus(HotReloadStatusKind.Compiling, "Hot reload: could not update in place, restarting the app...", [])
+			);
+			await SendAsync(new { type = "delta-failed" }).ConfigureAwait(true);
+			return false;
 		}
 	}
 
@@ -236,10 +342,12 @@ internal sealed class HotReloadClient : IAsyncDisposable
 
 		try
 		{
+			// The app assembly, plus the libraries that changed since the last build.
 			var assemblies = await Task.WhenAll(assemblyNames.Select(name => FetchAssemblyAsync(generation, name))).ConfigureAwait(true);
 
 			await _runtime.ApplyAsync(assemblies).ConfigureAwait(true);
 			_serverGeneration = generation;
+			_appliedDeltas = 0;
 			return true;
 		}
 		catch (Exception ex)
@@ -257,6 +365,12 @@ internal sealed class HotReloadClient : IAsyncDisposable
 		var js = _hostServices.GetRequiredService<IJSRuntime>();
 		return _module ??= await js.InvokeAsync<IJSObjectReference>("import", "./_content/Dtr.Blazor.HotReload/hotreload.js")
 			.ConfigureAwait(true);
+	}
+
+	private async Task<bool> ReloadOnceAsync(string key)
+	{
+		var module = await GetModuleAsync().ConfigureAwait(true);
+		return await module.InvokeAsync<bool>("reloadOnce", key).ConfigureAwait(true);
 	}
 
 	private async Task ReloadCssAsync(string path)
@@ -283,9 +397,12 @@ internal sealed class HotReloadClient : IAsyncDisposable
 		string Type,
 		string? Session,
 		int Generation,
+		int Sequence,
 		string? Path,
 		IReadOnlyList<string>? Css,
 		IReadOnlyList<string>? Assemblies,
+		IReadOnlyList<ServerMessage>? Deltas,
+		IReadOnlyList<DeltaPayload>? Updates,
 		IReadOnlyList<HotReloadDiagnostic>? Diagnostics
 	);
 }

@@ -43,6 +43,7 @@ public sealed class HotReloadRuntime : IAsyncDisposable
 	private AppGeneration? _current;
 	private Renderer? _renderer;
 	private HotReloadClient? _client;
+	private int _restartRequestedFor = -1;
 
 	internal HotReloadRuntime(
 		AppEntryPoint entryPoint,
@@ -124,6 +125,36 @@ public sealed class HotReloadRuntime : IAsyncDisposable
 		}
 	}
 
+	/// <summary>
+	/// Patches the running assemblies in place (Edit-and-Continue deltas): nothing is recreated, so all state is kept.
+	/// Blazor re-renders all components afterwards.
+	/// </summary>
+	public async Task ApplyDeltaAsync(IReadOnlyList<DeltaPayload> updates)
+	{
+		ArgumentNullException.ThrowIfNull(updates);
+
+		await _swapLock.WaitAsync().ConfigureAwait(true);
+		try
+		{
+			var stopwatch = Stopwatch.StartNew();
+			DeltaApplier.Apply(updates);
+			stopwatch.Stop();
+
+			Console.WriteLine($"[hotreload] Applied update in place ({updates.Count} assemblies) in {stopwatch.ElapsedMilliseconds} ms");
+			SetStatus(
+				new HotReloadStatus(
+					HotReloadStatusKind.Applied,
+					$"Hot reload applied in place, state kept ({stopwatch.ElapsedMilliseconds} ms)",
+					[]
+				)
+			);
+		}
+		finally
+		{
+			_swapLock.Release();
+		}
+	}
+
 	public async ValueTask DisposeAsync()
 	{
 		if (_client is not null)
@@ -192,6 +223,36 @@ public sealed class HotReloadRuntime : IAsyncDisposable
 	{
 		Status = status;
 		StatusChanged?.Invoke();
+	}
+
+	/// <summary>
+	/// Called for exceptions that end up in the app's error boundary.
+	/// In-place updates can leave code behind that is out of date: e.g. when a method's signature changes, unchanged callers still call
+	/// the old version, which now throws a HotReloadException. A full swap (compiled from scratch) fixes that.
+	/// </summary>
+	internal void OnUnhandledException(Exception exception)
+	{
+		var isStaleCode = false;
+		for (var current = exception; current is not null; current = current.InnerException)
+		{
+			isStaleCode |= current.GetType().FullName == "System.Runtime.CompilerServices.HotReloadException";
+		}
+
+		if (!isStaleCode || _client is null || _restartRequestedFor == Current.Number)
+		{
+			return;
+		}
+
+		_restartRequestedFor = Current.Number;
+		Console.WriteLine("[hotreload] Code is out of date after an in-place update, restarting the app");
+		SetStatus(
+			new HotReloadStatus(
+				HotReloadStatusKind.Compiling,
+				"Hot reload: code changed too much to update in place, restarting the app...",
+				[]
+			)
+		);
+		_ = _client.RequestRestartAsync();
 	}
 
 	private static void Invoke(MethodInfo method, object?[] args)

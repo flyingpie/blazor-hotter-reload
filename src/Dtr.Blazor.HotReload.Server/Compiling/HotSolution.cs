@@ -1,8 +1,10 @@
 using System.Diagnostics;
 using System.Globalization;
+using System.Reflection;
 using System.Text;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.Emit;
+using Microsoft.CodeAnalysis.Host.Mef;
 using Microsoft.CodeAnalysis.Text;
 
 namespace Dtr.Blazor.HotReload.Server.Compiling;
@@ -10,7 +12,9 @@ namespace Dtr.Blazor.HotReload.Server.Compiling;
 /// <summary>
 /// A Roslyn workspace with the hot projects (the app and the libraries it ships), kept in sync with the file system.
 /// <para>
-/// Roslyn compiles incrementally: only changed documents are re-parsed, and the source generators (Razor!) run incrementally too.
+/// Used both for full compiles (new generations) and for Edit-and-Continue deltas, so the PDBs of a generation match exactly what
+/// the delta engine expects as its baseline. Roslyn compiles incrementally: only changed documents are re-parsed, and the source
+/// generators (Razor!) run incrementally too.
 /// </para>
 /// </summary>
 internal sealed class HotSolution
@@ -19,19 +23,35 @@ internal sealed class HotSolution
 	private const string SynthesizedConfigName = "dtr-hotreload.generated.globalconfig";
 	private const int MaxReportedErrors = 50;
 
+	/// <summary>
+	/// The Edit-and-Continue services are MEF parts in these.
+	/// </summary>
+	private static readonly string[] FeatureAssemblies =
+	[
+		"Microsoft.CodeAnalysis.Features",
+		"Microsoft.CodeAnalysis.CSharp.Features",
+		"Microsoft.CodeAnalysis.ExternalAccess.HotReload",
+	];
+
 	private readonly Dictionary<string, Entry> _entries;
 
-	private HotSolution(Solution solution, Dictionary<string, Entry> entries)
+	private HotSolution(AdhocWorkspace workspace, Solution solution, Dictionary<string, Entry> entries)
 	{
+		Workspace = workspace;
 		Solution = solution;
 		_entries = entries;
 	}
 
+	public AdhocWorkspace Workspace { get; }
+
 	public Solution Solution { get; private set; }
 
-	public static HotSolution Create(IReadOnlyList<HotProject> projects)
+	public IEnumerable<ProjectId> ProjectIds => _entries.Values.Select(e => e.Id);
+
+	public static HotSolution Create(IReadOnlyList<HotProject> projects, string appBaselineAssembly)
 	{
-		var workspace = new AdhocWorkspace();
+		var features = FeatureAssemblies.Select(Assembly.Load);
+		var workspace = new AdhocWorkspace(MefHostServices.Create(MefHostServices.DefaultAssemblies.Concat(features)));
 
 		var entries = new Dictionary<string, Entry>(StringComparer.Ordinal);
 		var infos = new List<ProjectInfo>();
@@ -40,6 +60,13 @@ internal sealed class HotSolution
 			var inputs = ProjectInputs.Load(project.ResponseFile, project.ProjectDirectory);
 			var args = File.ReadAllLines(project.ResponseFile);
 			var info = CommandLineProject.CreateProjectInfo(project.Name, LanguageNames.CSharp, args, project.ProjectDirectory, workspace);
+
+			// Edit-and-Continue skips projects without a file path, and needs the baseline (what the browser is running).
+			var baseline = project.IsApp ? appBaselineAssembly : info.CompilationOutputInfo.AssemblyPath ?? inputs.OutputAssembly;
+			info = info.WithFilePath(project.ProjectFile)
+				.WithCompilationOutputInfo(info.CompilationOutputInfo.WithAssemblyPath(baseline))
+				.WithDocuments(info.Documents.Select(Snapshot))
+				.WithAdditionalDocuments(info.AdditionalDocuments.Select(Snapshot));
 
 			infos.Add(info);
 			entries[project.ProjectFile] = new Entry(project, inputs, info.Id);
@@ -72,7 +99,7 @@ internal sealed class HotSolution
 		}
 
 		var solution = infos.Aggregate(workspace.CurrentSolution, (s, info) => s.AddProject(info));
-		return new HotSolution(solution, entries);
+		return new HotSolution(workspace, solution, entries);
 	}
 
 	/// <summary>
@@ -103,6 +130,10 @@ internal sealed class HotSolution
 		}
 	}
 
+	public ProjectId GetProjectId(HotProject project) => _entries[project.ProjectFile].Id;
+
+	public HotProject GetProject(ProjectId id) => _entries.Values.Single(e => e.Id == id).Project;
+
 	/// <summary>
 	/// Brings the documents of the given projects in line with the file system (changed, added and removed .cs and .razor files).
 	/// </summary>
@@ -117,11 +148,23 @@ internal sealed class HotSolution
 		}
 	}
 
+	/// <summary>
+	/// Points the delta engine to the assembly the browser is now running for this project.
+	/// </summary>
+	public void SetBaseline(HotProject project, string assemblyPath)
+	{
+		var id = _entries[project.ProjectFile].Id;
+		var output = Solution.GetProject(id)!.CompilationOutputInfo.WithAssemblyPath(assemblyPath);
+		Solution = Solution.WithProjectCompilationOutputInfo(id, output);
+	}
+
 	public async Task<CompileResult> EmitAsync(HotProject project)
 	{
 		var stopwatch = Stopwatch.StartNew();
 		var entry = _entries[project.ProjectFile];
-		var compilation = (await Solution.GetProject(entry.Id)!.GetCompilationAsync().ConfigureAwait(false))!;
+		// A clone: the workspace's compilation may already have been emitted by the delta engine, and emitting the same compilation
+		// again can fail (anonymous types and delegates get their names during emit).
+		var compilation = (await Solution.GetProject(entry.Id)!.GetCompilationAsync().ConfigureAwait(false))!.Clone();
 
 		using var assemblyStream = new MemoryStream();
 		using var symbolStream = new MemoryStream();
@@ -158,6 +201,20 @@ internal sealed class HotSolution
 		);
 	}
 
+	/// <summary>
+	/// Reads the document now, so the text can't change behind our back. The workspace would otherwise (re)load it from disk lazily,
+	/// and then the delta engine wouldn't see the difference between the old and the new version.
+	/// </summary>
+	private static DocumentInfo Snapshot(DocumentInfo document)
+	{
+		if (document.FilePath is null || ReadText(document.FilePath) is not { } text)
+		{
+			return document;
+		}
+
+		return document.WithTextLoader(TextLoader.From(TextAndVersion.Create(text, VersionStamp.Create(), document.FilePath)));
+	}
+
 	private static SourceText? ReadText(string path)
 	{
 		// Editors sometimes have the file locked for a moment while saving, so retry a few times.
@@ -169,7 +226,7 @@ internal sealed class HotSolution
 			{
 				using var stream = File.OpenRead(path);
 
-				// Same checksum algorithm as the compiler uses by default.
+				// Same checksum algorithm as the compiler uses by default, so the delta engine can match the documents with the PDB.
 				return SourceText.From(stream, encoding: null, SourceHashAlgorithm.Sha256, canBeEmbedded: true);
 			}
 			catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException)
