@@ -11,6 +11,9 @@ public static class Program
 
 		  --project <path>        The app project (default: the only .csproj in the current directory)
 		  --port <port>           Port to listen on (default: 2009)
+		  --devserver             Also run (and restart after regular builds) the app's dev server ("dotnet run")
+		  --launch-profile <name> Launch profile for the dev server (default: the first one in Properties/launchSettings.json)
+		  --devserver-url <url>   Where the dev server listens (default: the launch profile's applicationUrl)
 		""";
 
 	public static async Task<int> Main(string[] args)
@@ -18,6 +21,9 @@ public static class Program
 		// Deliberately simple argument parsing: this is a dev tool, and a full command-line library would be overkill.
 		string? project = null;
 		var port = DefaultPort;
+		var devServer = false;
+		Uri? devServerUrl = null;
+		string? launchProfile = null;
 
 		var queue = new Queue<string>(args);
 		while (queue.TryDequeue(out var arg))
@@ -29,6 +35,15 @@ public static class Program
 					break;
 				case "--port" when queue.Count > 0:
 					port = int.Parse(queue.Dequeue(), CultureInfo.InvariantCulture);
+					break;
+				case "--devserver":
+					devServer = true;
+					break;
+				case "--devserver-url" when queue.Count > 0:
+					devServerUrl = new Uri(queue.Dequeue());
+					break;
+				case "--launch-profile" when queue.Count > 0:
+					launchProfile = queue.Dequeue();
 					break;
 				case "-h" or "--help":
 					Console.WriteLine(Usage);
@@ -56,7 +71,24 @@ public static class Program
 		// compiler/workspace assemblies.
 		RoslynLoader.Register(location.RoslynDirectory);
 
-		await HotReloadServer.RunAsync(location, port).ConfigureAwait(false);
+		DevServerProcess? devServerProcess = null;
+		if (devServer)
+		{
+			devServerUrl ??= LaunchSettings.GetApplicationUrl(location.ProjectDirectory, launchProfile);
+			if (devServerUrl is null)
+			{
+				await Console.Error.WriteLineAsync("No applicationUrl found in Properties/launchSettings.json, pass it with --devserver-url.").ConfigureAwait(false);
+				return 1;
+			}
+
+			devServerProcess = new DevServerProcess(location, launchProfile, devServerUrl);
+		}
+
+		using (devServerProcess)
+		{
+			await HotReloadServer.RunAsync(location, port, devServerProcess).ConfigureAwait(false);
+		}
+
 		return 0;
 	}
 

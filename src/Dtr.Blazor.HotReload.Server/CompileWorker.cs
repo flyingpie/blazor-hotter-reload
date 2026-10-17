@@ -26,6 +26,7 @@ internal sealed class CompileWorker : IDisposable
 	private readonly HashSet<string> _changedCss = new(StringComparer.Ordinal);
 	private readonly HashSet<string> _changedProjects = new(StringComparer.Ordinal);
 	private readonly List<FileSystemWatcher> _watchers = [];
+	private readonly DevServerProcess? _devServer;
 
 	private List<ProjectState> _projects = [];
 	private HotSolution? _solution;
@@ -33,10 +34,11 @@ internal sealed class CompileWorker : IDisposable
 	private bool _buildChanged;
 	private Timer? _debounce;
 
-	public CompileWorker(ProjectLocation location, HotReloadHub hub)
+	public CompileWorker(ProjectLocation location, HotReloadHub hub, DevServerProcess? devServer)
 	{
 		_location = location;
 		_hub = hub;
+		_devServer = devServer;
 		_wwwroot = Path.Combine(location.ProjectDirectory, "wwwroot");
 	}
 
@@ -72,7 +74,7 @@ internal sealed class CompileWorker : IDisposable
 			{
 				if (build)
 				{
-					await OnBuildAsync().ConfigureAwait(false);
+					await OnBuildAsync(token).ConfigureAwait(false);
 					continue;
 				}
 
@@ -132,14 +134,22 @@ internal sealed class CompileWorker : IDisposable
 	/// <summary>
 	/// A regular build of the app happened (which also builds the libraries): start over from its output.
 	/// </summary>
-	private async Task OnBuildAsync()
+	private async Task OnBuildAsync(CancellationToken token)
 	{
 		Log.Info("Build output changed, starting over from the new build");
 		await LoadProjectsAsync().ConfigureAwait(false);
 		_hub.Reset();
 
 		// The dev server only picks up the new (fingerprinted) build output after a restart.
-		_hub.Broadcast(new { type = "rebuilt" });
+		if (_devServer is null)
+		{
+			_hub.Broadcast(new { type = "rebuilt" });
+		}
+		else
+		{
+			await _devServer.RestartAsync(token).ConfigureAwait(false);
+			_hub.Broadcast(new { type = "reload" });
+		}
 	}
 
 	private async Task LoadProjectsAsync()
@@ -265,16 +275,22 @@ internal sealed class CompileWorker : IDisposable
 			Log.Success($"Watching {directory}");
 		}
 
-		var buildOutput = new FileSystemWatcher(
-			Path.GetDirectoryName(_location.IntermediateAssembly)!,
-			Path.GetFileName(_location.IntermediateAssembly)
-		)
+		// The app assembly, and the boot config (which also changes when only static assets changed, e.g. in a library).
+		string[] buildOutputs = [Path.GetFileName(_location.IntermediateAssembly), "dotnet.js"];
+		var buildOutput = new FileSystemWatcher(Path.GetDirectoryName(_location.IntermediateAssembly)!)
 		{
 			NotifyFilter = NotifyFilters.FileName | NotifyFilters.LastWrite | NotifyFilters.Size,
 		};
-		buildOutput.Changed += (_, _) => OnBuildOutputChanged();
-		buildOutput.Created += (_, _) => OnBuildOutputChanged();
-		buildOutput.Renamed += (_, _) => OnBuildOutputChanged();
+		FileSystemEventHandler onChanged = (_, e) =>
+		{
+			if (buildOutputs.Contains(e.Name, StringComparer.Ordinal))
+			{
+				OnBuildOutputChanged();
+			}
+		};
+		buildOutput.Changed += onChanged;
+		buildOutput.Created += onChanged;
+		buildOutput.Renamed += (sender, e) => onChanged(sender, e);
 		buildOutput.EnableRaisingEvents = true;
 		_watchers.Add(buildOutput);
 	}

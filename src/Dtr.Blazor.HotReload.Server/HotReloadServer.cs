@@ -15,12 +15,12 @@ namespace Dtr.Blazor.HotReload.Server;
 internal static class HotReloadServer
 {
 	/// <summary>
-	/// Starts the web host, then the compile worker. Runs until the process is stopped.
+	/// Starts the web host, then (optionally) the app's dev server, then the compile worker. Runs until the process is stopped.
 	/// </summary>
-	public static async Task RunAsync(ProjectLocation location, int port)
+	public static async Task RunAsync(ProjectLocation location, int port, DevServerProcess? devServer)
 	{
 		var hub = new HotReloadHub();
-		using var worker = new CompileWorker(location, hub);
+		using var worker = new CompileWorker(location, hub, devServer);
 
 		var builder = WebApplication.CreateSlimBuilder(new WebApplicationOptions { ContentRootPath = AppContext.BaseDirectory });
 		builder.WebHost.UseUrls($"http://127.0.0.1:{port}");
@@ -44,8 +44,11 @@ internal static class HotReloadServer
 					return;
 				}
 
+				// Also stop when the server stops, otherwise shutting down waits for the browsers to disconnect.
+				var stopping = context.RequestServices.GetRequiredService<IHostApplicationLifetime>().ApplicationStopping;
+				using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(context.RequestAborted, stopping);
 				using var socket = await context.WebSockets.AcceptWebSocketAsync().ConfigureAwait(false);
-				await hub.HandleAsync(socket, context.RequestAborted).ConfigureAwait(false);
+				await hub.HandleAsync(socket, cancellation.Token).ConfigureAwait(false);
 			}
 		);
 		app.MapGet("/hotreload/{generation:int}/{file}", (int generation, string file) => Serve(hub, generation, file));
@@ -56,6 +59,11 @@ internal static class HotReloadServer
 		var lifetime = app.Services.GetRequiredService<IHostApplicationLifetime>();
 		try
 		{
+			if (devServer is not null)
+			{
+				await devServer.StartAsync(lifetime.ApplicationStopping).ConfigureAwait(false);
+			}
+
 			await worker.RunAsync(lifetime.ApplicationStopping).ConfigureAwait(false);
 		}
 		catch (OperationCanceledException)

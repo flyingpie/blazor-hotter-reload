@@ -67,16 +67,17 @@ Requires .NET 10 (SDK and app).
    `UseHotReload` must come after the root components are added. Services registered on the builder *before* it (framework defaults, logging providers)
    are shared by all versions of the app; everything in `ConfigureServices` is created fresh for every new version.
 
-3. Install the server as a (local) tool, and run it next to the app's dev server:
+3. Install the server as a (local) tool, and run it next to the app:
 
    ```sh
    dotnet new tool-manifest   # if there isn't one yet
    dotnet tool install Dtr.Blazor.HotReload.Server
    dotnet build path/to/App.csproj -c Debug
-   dotnet tool run dtr-blazor-hotreload --project path/to/App.csproj
+   dotnet tool run dtr-blazor-hotreload --project path/to/App.csproj --devserver
    ```
 
-   Then open the app, edit any `.razor` / `.cs` file of the app or its libraries, and save.
+   With `--devserver` the server also runs the app's dev server (`dotnet run`, with the URL from `Properties/launchSettings.json`),
+   and restarts it after regular builds. Then open the app, edit any `.razor` / `.cs` file of the app or its libraries, and save.
 
 Server options:
 
@@ -84,6 +85,9 @@ Server options:
 | --- | --- |
 | `--project <path>` | The only `.csproj` in the current directory |
 | `--port <port>` | `2009` |
+| `--devserver` | Off: run the dev server yourself (and restart it after regular builds) |
+| `--launch-profile <name>` | The first profile in `Properties/launchSettings.json` |
+| `--devserver-url <url>` | The launch profile's `applicationUrl` |
 
 Browser side configuration (all optional), in the app's `wwwroot/appsettings.json`:
 
@@ -126,7 +130,7 @@ loaded next to the old one, as a new **app generation**.
 | Other `wwwroot` files (`index.html`, `app.js`, ...) | Page reload |
 | Compile error | Overlay with the errors; the app keeps running the previous version |
 | Unhandled exception while rendering | Shown in place of the app; fix it and save |
-| Packages, csproj, or anything generated at build time only | Needs a regular build. The server notices; restart the dev server and reload the page |
+| Packages, csproj, or anything generated at build time only | Needs a regular build. The server notices, restarts the dev server (with `--devserver`), and reloads the page |
 
 **State is not kept**: every new version starts the app over, in-memory component and service state (including static fields) is reset.
 If a library needs static setup at startup, put it in `InitializeServices`, which runs for every generation.
