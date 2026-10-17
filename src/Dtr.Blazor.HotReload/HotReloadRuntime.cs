@@ -42,6 +42,7 @@ public sealed class HotReloadRuntime : IAsyncDisposable
 	private AsyncServiceScope _hostScope;
 	private AppGeneration? _current;
 	private Renderer? _renderer;
+	private HotReloadClient? _client;
 
 	internal HotReloadRuntime(
 		AppEntryPoint entryPoint,
@@ -123,6 +124,11 @@ public sealed class HotReloadRuntime : IAsyncDisposable
 
 	public async ValueTask DisposeAsync()
 	{
+		if (_client is not null)
+		{
+			await _client.DisposeAsync().ConfigureAwait(false);
+		}
+
 		if (_current is not null)
 		{
 			await _current.DisposeAsync().ConfigureAwait(false);
@@ -165,6 +171,9 @@ public sealed class HotReloadRuntime : IAsyncDisposable
 
 		// Make sure that poking the renderer works, before anyone tries to hot reload anything.
 		_ = GetCascadingValueSuppliersField();
+
+		_client = new HotReloadClient(this, _hostScope.ServiceProvider);
+		_client.Start();
 	}
 
 	internal void Detach(HotReloadRoot root) => _roots.Remove(root);
