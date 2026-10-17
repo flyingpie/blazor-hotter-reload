@@ -3,6 +3,7 @@ using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
 using System.Runtime.ExceptionServices;
 using System.Runtime.Loader;
+using Dtr.Blazor.HotReload.State;
 using Microsoft.AspNetCore.Components;
 using Microsoft.AspNetCore.Components.RenderTree;
 using Microsoft.AspNetCore.Components.WebAssembly.Hosting;
@@ -44,6 +45,7 @@ public sealed class HotReloadRuntime : IAsyncDisposable
 	private Renderer? _renderer;
 	private HotReloadClient? _client;
 	private int _restartRequestedFor = -1;
+	private List<IComponent>? _componentsBeforeDelta;
 
 	internal HotReloadRuntime(
 		AppEntryPoint entryPoint,
@@ -74,6 +76,11 @@ public sealed class HotReloadRuntime : IAsyncDisposable
 	internal bool HasOverlayOwner { get; set; }
 
 	/// <summary>
+	/// After a full swap: the state of the previous generation's components, for the new components to pick up when they are created.
+	/// </summary>
+	internal StateCarryOver? PendingState { get; private set; }
+
+	/// <summary>
 	/// Loads a new version of the app assembly, and swaps the whole app over to it.
 	/// Throws when anything goes wrong before the swap; the current generation stays active in that case.
 	/// </summary>
@@ -94,9 +101,29 @@ public sealed class HotReloadRuntime : IAsyncDisposable
 			var next = BuildGeneration(number, newAssembly, loadContext.AssembliesByName);
 			var previous = Current;
 
+			// Carry over what state we can: statics and services now, components when they are created (see HotReloadComponentActivator).
+			// If an in-place update left stale code behind, the error boundary has already thrown the components away: use the ones from
+			// before that update.
+			var oldComponents =
+				_restartRequestedFor == previous.Number && _componentsBeforeDelta is not null
+					? _componentsBeforeDelta
+					: StateCarryOver.GetComponents(_renderer);
+			_componentsBeforeDelta = null;
+			var state = StateCarryOver.Capture(oldComponents, next.Assemblies);
+			try
+			{
+				state.CarryOverServicesAndStatics(previous, next);
+			}
+			catch (Exception ex)
+				when (ex is TargetInvocationException or InvalidOperationException or ArgumentException or MemberAccessException)
+			{
+				Console.WriteLine($"[hotreload] Could not carry over services/statics: {ex}");
+			}
+
 			InvokeInitializeServices(next);
 
 			_current = next;
+			PendingState = state;
 			UpdateRendererCascadingValueSuppliers(next);
 
 			// Re-render all roots with the root components of the new generation (which disposes the old component tree).
@@ -108,13 +135,15 @@ public sealed class HotReloadRuntime : IAsyncDisposable
 			await previous.DisposeAsync().ConfigureAwait(true);
 
 			stopwatch.Stop();
+			var carried = $"{state.Components} components, {state.Services} services, {state.Statics} statics";
 			Console.WriteLine(
-				$"[hotreload] Applied generation {number} ({string.Join(", ", assemblies.Select(a => a.Name))}) in {stopwatch.ElapsedMilliseconds} ms"
+				$"[hotreload] Applied generation {number} ({string.Join(", ", assemblies.Select(a => a.Name))}) in {stopwatch.ElapsedMilliseconds} ms, "
+					+ $"carried over {carried} ({state.Failures} fields could not be carried over)"
 			);
 			SetStatus(
 				new HotReloadStatus(
 					HotReloadStatusKind.Applied,
-					$"Hot reload applied, app restarted (generation {number}, {stopwatch.ElapsedMilliseconds} ms)",
+					$"Hot reload applied, app restarted, state carried over where possible ({carried}; {stopwatch.ElapsedMilliseconds} ms)",
 					[]
 				)
 			);
@@ -137,6 +166,9 @@ public sealed class HotReloadRuntime : IAsyncDisposable
 		try
 		{
 			var stopwatch = Stopwatch.StartNew();
+
+			// In case the update leaves stale code behind, and a full swap is needed after all (see OnUnhandledException).
+			_componentsBeforeDelta = StateCarryOver.GetComponents(_renderer);
 			DeltaApplier.Apply(updates);
 			stopwatch.Stop();
 
