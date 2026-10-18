@@ -90,8 +90,10 @@ public sealed class HotReloadRuntime : IAsyncDisposable
 			var loadContext = new GenerationLoadContext(number, assemblies);
 			var newAssembly = loadContext.Get(_initialAssembly.GetName().Name!);
 
-			var next = BuildGeneration(number, newAssembly);
+			var next = BuildGeneration(number, newAssembly, loadContext.AssembliesByName);
 			var previous = Current;
+
+			InvokeInitializeServices(next);
 
 			_current = next;
 			UpdateRendererCascadingValueSuppliers(next);
@@ -153,7 +155,11 @@ public sealed class HotReloadRuntime : IAsyncDisposable
 		_hostScope = _hostProvider.CreateAsyncScope();
 
 		// Generation 0 is built the exact same way as all the next ones, so problems with that show up right away.
-		_current = BuildGeneration(0, _initialAssembly);
+		_current = BuildGeneration(
+			0,
+			_initialAssembly,
+			new Dictionary<string, Assembly>(StringComparer.OrdinalIgnoreCase) { [_initialAssembly.GetName().Name!] = _initialAssembly }
+		);
 
 		return new SwappableServiceProvider(this, isRoot: true);
 	}
@@ -206,14 +212,14 @@ public sealed class HotReloadRuntime : IAsyncDisposable
 			$"Field 'Renderer.{CascadingValueSuppliersFieldName}' was not found; Blazor internals have changed, Dtr.Blazor.HotReload needs to be updated."
 		);
 
-	private AppGeneration BuildGeneration(int number, Assembly assembly)
+	private AppGeneration BuildGeneration(int number, Assembly assembly, IReadOnlyDictionary<string, Assembly> assemblies)
 	{
 		var services = new ServiceCollection();
 
 		ForwardHostServices(services);
 		InvokeConfigureServices(assembly, services);
 
-		return new AppGeneration(number, assembly, services.BuildServiceProvider());
+		return new AppGeneration(number, assembly, assemblies, services.BuildServiceProvider());
 	}
 
 	/// <summary>
@@ -294,6 +300,32 @@ public sealed class HotReloadRuntime : IAsyncDisposable
 			);
 
 		Invoke(method, [services, _configuration, _environment]);
+	}
+
+	/// <summary>
+	/// Static state in a new generation's assemblies starts out fresh (e.g. <c>Dtr.Utils.Log</c>), give the app a chance to set it up.
+	/// Generation 0 is initialized by the app itself.
+	/// </summary>
+	private void InvokeInitializeServices(AppGeneration generation)
+	{
+		if (_entryPoint.InitializeMethodName is null)
+		{
+			return;
+		}
+
+		var method =
+			generation
+				.Assembly.GetType(_entryPoint.TypeName, throwOnError: false)
+				?.GetMethod(
+					_entryPoint.InitializeMethodName,
+					BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic,
+					[typeof(IServiceProvider)]
+				)
+			?? throw new InvalidOperationException(
+				$"Method '{_entryPoint.TypeName}.{_entryPoint.InitializeMethodName}' (with the original signature) was not found in the app assembly."
+			);
+
+		Invoke(method, [generation.Services]);
 	}
 
 	/// <summary>

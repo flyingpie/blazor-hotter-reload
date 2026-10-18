@@ -1,7 +1,7 @@
 # Dtr.Blazor.HotReload
 
 Hot reload for Blazor WebAssembly apps that applies (almost) any change within ~1-2 seconds, without rebuilding, restarting,
-or reloading the page.
+or reloading the page. Changes in the libraries the app uses (its project references) are hot reloaded too.
 
 Two packages:
 
@@ -40,12 +40,14 @@ Requires .NET 10 (SDK and app).
            builder.RootComponents.Add<HeadOutlet>("head::after");
 
    #if HOTRELOAD
-           builder.UseHotReload(ConfigureServices);
+           builder.UseHotReload(ConfigureServices, InitializeServices);
    #else
            ConfigureServices(builder.Services, builder.Configuration, builder.HostEnvironment);
    #endif
 
-           await builder.Build().RunAsync();
+           var host = builder.Build();
+           InitializeServices(host.Services);
+           await host.RunAsync();
        }
 
        // Called again for every new version of the app (so it must be static, and keep its name and signature).
@@ -53,6 +55,11 @@ Requires .NET 10 (SDK and app).
        {
            services.AddScoped(_ => new HttpClient { BaseAddress = new Uri(env.BaseAddress) });
            // ...
+       }
+
+       // Optional: static setup that depends on the services (e.g. a static logger factory). Also called for every new version.
+       public static void InitializeServices(IServiceProvider services)
+       {
        }
    }
    ```
@@ -69,7 +76,7 @@ Requires .NET 10 (SDK and app).
    dotnet tool run dtr-blazor-hotreload --project path/to/App.csproj
    ```
 
-   Then open the app, edit any `.razor` / `.cs` file of the app, and save.
+   Then open the app, edit any `.razor` / `.cs` file of the app or its libraries, and save.
 
 Server options:
 
@@ -91,17 +98,20 @@ loaded next to the old one, as a new **app generation**.
 
 ### Server (`dtr-blazor-hotreload`, on the dev machine)
 
-- Keeps a Roslyn workspace with the app. It reuses the exact compiler command line of the last regular build (captured by the package's build targets):
-  the same references, the same source generators (including Razor), the same editorconfigs, and so on.
-- Roslyn and the workspace layer are loaded from the installed SDK (its Roslyn and dotnet-watch), so they always match the SDK's Razor generator.
-- On every save it recompiles the app (incrementally: only changed documents are re-parsed), emits it to memory, and tells the browser through a WebSocket.
+- Keeps a Roslyn workspace with the app and the libraries it ships to the browser (its project references).
+  - For the app it reuses the exact compiler command line of the last regular build (captured by the package's build targets): the same references,
+    the same source generators (including Razor), the same editorconfigs, and so on.
+  - For the libraries it asks MSBuild for their command lines with a "design-time" compile (the way IDEs do it), so the libraries need no changes.
+  - Roslyn and the workspace layer are loaded from the installed SDK (its Roslyn and dotnet-watch), so they always match the SDK's Razor generator.
+- On every save it recompiles (incrementally: only changed documents are re-parsed) the app plus every library that changed since the last
+  regular build (and libraries that depend on those), emits them to memory, and tells the browser through a WebSocket.
   A reloaded page catches up with the latest generation.
 
 ### Browser (`Dtr.Blazor.HotReload`)
 
-- A new generation's assemblies are loaded together into a fresh `AssemblyLoadContext`. Their dependencies (the framework, third-party
+- A new generation's assemblies are loaded together into a fresh `AssemblyLoadContext`, so the new app binds to the new versions of its libraries. Their other dependencies (the framework, third-party
   libraries) come from the default context, so those types are shared.
-- A new DI container is built by calling `ConfigureServices` from the *new* assembly, and swapped in behind the service provider that Blazor uses.
+- A new DI container is built by calling `ConfigureServices` from the *new* assembly (then `InitializeServices`), and swapped in behind the service provider that Blazor uses.
   Services registered on the builder before `UseHotReload()` (framework services such as `NavigationManager`, `IJSRuntime` and logging)
   are shared by all generations.
 - The root is re-rendered (`HotReloadRoot` takes the place of the app's root component) with the new root component, which replaces the
@@ -111,7 +121,7 @@ loaded next to the old one, as a new **app generation**.
 
 | Change | Result |
 | --- | --- |
-| `.razor` / `.cs` changes in the app: markup, code, new/removed files, members, signatures, DI registrations, ... | New version of the app (~1-2 s) |
+| `.razor` / `.cs` changes in the app or its libraries: markup, code, new/removed files, members, signatures, renamed enum values, DI registrations, ... | New version of the app (~1-2 s) |
 | `wwwroot/**/*.css` | Hot (stylesheet is re-fetched) |
 | Other `wwwroot` files (`index.html`, `app.js`, ...) | Page reload |
 | Compile error | Overlay with the errors; the app keeps running the previous version |
@@ -119,12 +129,13 @@ loaded next to the old one, as a new **app generation**.
 | Packages, csproj, or anything generated at build time only | Needs a regular build. The server notices; restart the dev server and reload the page |
 
 **State is not kept**: every new version starts the app over, in-memory component and service state (including static fields) is reset.
+If a library needs static setup at startup, put it in `InitializeServices`, which runs for every generation.
 The URL, local storage, cookies and the login are kept.
 
 ## Limitations
 
 - Old assemblies can't be unloaded in the browser. After 30 new versions (`HotReload:MaxGenerations`), the page is reloaded once to free memory.
-- Code in `Main` outside `ConfigureServices` (culture, environment variables, logging providers) only runs on a page reload.
+- Code in `Main` outside `ConfigureServices` / `InitializeServices` (culture, environment variables, logging providers) only runs on a page reload.
 - Breakpoints only bind to the assembly the page started with. Reload the page to debug the latest code.
 - Blazor WebAssembly only (not Blazor Server, nor hybrid/desktop hosts).
 - Relies on a few Blazor internals (`RenderHandle._renderer`, `Renderer.ServiceProviderCascadingValueSuppliers`).
@@ -132,7 +143,7 @@ The URL, local storage, cookies and the login are kept.
 
 ## Files it leaves behind
 
-- `dtr-hotreload.rsp` / `dtr-hotreload.txt` in the app's intermediate (obj) directory: its compiler command line.
+- `dtr-hotreload.rsp` / `dtr-hotreload.txt` in the intermediate (obj) directories of the app and its libraries: their compiler command lines.
 
 ## Building the packages
 
