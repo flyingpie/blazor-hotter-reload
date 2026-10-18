@@ -2,6 +2,7 @@ using System.Net.WebSockets;
 using System.Text.Json;
 using System.Threading.Channels;
 using Dtr.Blazor.HotReload.Server.Compiling;
+using Dtr.Blazor.HotReload.Server.Deltas;
 
 namespace Dtr.Blazor.HotReload.Server;
 
@@ -17,6 +18,16 @@ internal sealed class HotReloadHub
 	private readonly Dictionary<int, Dictionary<string, (byte[] Assembly, byte[] Symbols)>> _generations = [];
 	private readonly List<Client> _clients = [];
 	private readonly HashSet<string> _changedCss = new(StringComparer.Ordinal);
+
+	/// <summary>
+	/// The in-place updates (Edit-and-Continue deltas) on top of the current generation, in order.
+	/// </summary>
+	private readonly List<object> _deltas = [];
+
+	/// <summary>
+	/// A message from a browser: its type, and the whole message.
+	/// </summary>
+	public event Action<string, JsonElement>? ClientMessage;
 
 	/// <summary>
 	/// Changes whenever we start over from a new build output (generation 0), so clients can tell that numbers have been reset.
@@ -53,6 +64,7 @@ internal sealed class HotReloadHub
 				StringComparer.OrdinalIgnoreCase
 			);
 			_generations.Remove(generation - GenerationsToKeep);
+			_deltas.Clear();
 		}
 
 		Broadcast(
@@ -77,7 +89,44 @@ internal sealed class HotReloadHub
 			Generation = 0;
 			_generations.Clear();
 			_changedCss.Clear();
+			_deltas.Clear();
 		}
+	}
+
+	/// <summary>
+	/// Publishes in-place updates for the current generation. Returns the sequence number of the delta within the generation.
+	/// </summary>
+	public int PublishDelta(IReadOnlyList<DeltaUpdate> updates)
+	{
+		ArgumentNullException.ThrowIfNull(updates);
+
+		object message;
+		int sequence;
+		lock (_lock)
+		{
+			sequence = _deltas.Count + 1;
+			message = new
+			{
+				type = "delta",
+				session = Session,
+				generation = Generation,
+				sequence,
+				updates = updates
+					.Select(u => new
+					{
+						moduleId = u.ModuleId,
+						metadata = u.Metadata,
+						il = u.IL,
+						pdb = u.Pdb,
+						updatedTypes = u.UpdatedTypes,
+					})
+					.ToList(),
+			};
+			_deltas.Add(message);
+		}
+
+		Broadcast(message);
+		return sequence;
 	}
 
 	/// <summary>
@@ -131,6 +180,7 @@ internal sealed class HotReloadHub
 				session = Session,
 				generation = Generation,
 				assemblies = _generations.TryGetValue(Generation, out var assemblies) ? assemblies.Keys.ToList() : [],
+				deltas = _deltas.ToList(),
 				css = _changedCss.ToList(),
 			};
 			client.Send(JsonSerializer.SerializeToUtf8Bytes(hello, JsonOptions));
@@ -140,8 +190,8 @@ internal sealed class HotReloadHub
 		Log.Info($"Browser connected ({ClientCount} total)");
 		try
 		{
-			// The browser doesn't send anything (yet), this just waits for it to go away.
 			var buffer = new byte[4096];
+			using var message = new MemoryStream();
 			while (socket.State == WebSocketState.Open && !token.IsCancellationRequested)
 			{
 				var result = await socket.ReceiveAsync(buffer, token).ConfigureAwait(false);
@@ -149,6 +199,13 @@ internal sealed class HotReloadHub
 				{
 					await socket.CloseOutputAsync(WebSocketCloseStatus.NormalClosure, null, CancellationToken.None).ConfigureAwait(false);
 					break;
+				}
+
+				await message.WriteAsync(buffer.AsMemory(0, result.Count), token).ConfigureAwait(false);
+				if (result.EndOfMessage)
+				{
+					OnClientMessage(message.ToArray());
+					message.SetLength(0);
 				}
 			}
 		}
@@ -170,6 +227,22 @@ internal sealed class HotReloadHub
 	}
 
 	private static string NewSession() => Guid.NewGuid().ToString("N");
+
+	private void OnClientMessage(byte[] payload)
+	{
+		try
+		{
+			using var json = JsonDocument.Parse(payload);
+			if (json.RootElement.TryGetProperty("type", out var type) && type.GetString() is { } name)
+			{
+				ClientMessage?.Invoke(name, json.RootElement.Clone());
+			}
+		}
+		catch (JsonException ex)
+		{
+			Log.Warning($"Invalid message from browser: {ex.Message}");
+		}
+	}
 
 	/// <summary>
 	/// A WebSocket only allows one send at a time, so messages are queued, and sent by a single loop.

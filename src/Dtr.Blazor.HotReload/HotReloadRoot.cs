@@ -79,8 +79,10 @@ public sealed class HotReloadRoot : IComponent, IDisposable
 		return (Renderer)field.GetValue(handle)!;
 	}
 
-	private static void BuildErrorContent(RenderTreeBuilder builder, Exception exception)
+	private void BuildErrorContent(RenderTreeBuilder builder, Exception exception)
 	{
+		Runtime.OnUnhandledException(exception);
+
 		builder.OpenElement(0, "div");
 		builder.AddAttribute(
 			1,
