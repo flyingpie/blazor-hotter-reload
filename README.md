@@ -19,7 +19,7 @@ Requires .NET 10 (SDK and app).
 
    ```xml
    <ItemGroup Condition="'$(Configuration)' == 'Debug'">
-     <PackageReference Include="Dtr.Blazor.HotReload" Version="0.1.2" />
+     <PackageReference Include="Dtr.Blazor.HotReload" Version="0.1.3" />
    </ItemGroup>
    ```
 
@@ -124,6 +124,9 @@ The approach is the same as [s&box's hotload](https://github.com/Facepunch/sbox-
 - **Deltas** are applied with `MetadataUpdater.ApplyUpdate`; then the `[MetadataUpdateHandler]`s run (Blazor re-renders all components).
   If a delta leaves stale code behind (e.g. a changed method signature with unchanged callers, which then throw a `HotReloadException`),
   the page asks for a full swap by itself.
+- **Fresh start** (the `⟳` button at the bottom left, also in the overlay and on the error page): asks the server for a full swap,
+  and reloads the page instead of swapping it in. The reloaded page catches up with that generation: everything starts over
+  (DOM, JavaScript, state), running the latest code, without a regular build.
 - **Full swaps** load the new assemblies together into a fresh `AssemblyLoadContext` (so the new app binds to the new versions of its libraries), then:
   - create a new DI container by calling `ConfigureServices` from the *new* assembly, then `InitializeServices`;
   - swap that container in, behind the service provider that Blazor uses;
@@ -139,6 +142,7 @@ The approach is the same as [s&box's hotload](https://github.com/Facepunch/sbox-
 | Other `wwwroot` files (`index.html`, `app.js`, ...) | Page reload |
 | Compile error (in any of the projects) | Overlay with the errors; the app keeps running the previous version |
 | Unhandled exception while rendering | Shown in place of the app; fix it and save |
+| The page got into a weird state | Click `⟳` (fresh start): recompiles everything in memory and reloads the page (~2-4 s) |
 | Packages, csproj, or anything generated at build time only | Needs a regular build. The server notices, restarts the dev server (with `--devserver`), and reloads the page |
 
 The overlay tells which one happened ("applied in place, state kept", or "app restarted, state carried over ...").

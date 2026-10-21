@@ -20,6 +20,8 @@ namespace Dtr.Blazor.HotReload;
 [SuppressMessage("Usage", "BL0006:Do not use RenderTree types", Justification = "We need the renderer to update its cascading values")]
 public sealed class HotReloadRoot : IComponent, IDisposable
 {
+	private const string FreshStartTitle = "Hot reload: fresh start (recompile everything and reload the page)";
+
 	private static readonly TimeSpan AppliedStatusDuration = TimeSpan.FromSeconds(3);
 
 	private RenderHandle _renderHandle;
@@ -110,9 +112,15 @@ public sealed class HotReloadRoot : IComponent, IDisposable
 		builder.OpenElement(2, "h3");
 		builder.AddContent(3, "Unhandled exception (hot reload: fix the code and save to try again)");
 		builder.CloseElement();
-		builder.OpenElement(4, "pre");
-		builder.AddAttribute(5, "style", "white-space:pre-wrap");
-		builder.AddContent(6, exception.ToString());
+		builder.OpenElement(4, "button");
+		builder.AddAttribute(5, "style", "font:inherit;cursor:pointer;padding:4px 10px");
+		builder.AddAttribute(6, "title", FreshStartTitle);
+		builder.AddAttribute(7, "onclick", EventCallback.Factory.Create<MouseEventArgs>(this, Runtime.RequestFreshStartAsync));
+		builder.AddContent(8, "⟳ Fresh start");
+		builder.CloseElement();
+		builder.OpenElement(9, "pre");
+		builder.AddAttribute(10, "style", "white-space:pre-wrap");
+		builder.AddContent(11, exception.ToString());
 		builder.CloseElement();
 		builder.CloseElement();
 	}
@@ -148,11 +156,41 @@ public sealed class HotReloadRoot : IComponent, IDisposable
 		);
 		builder.CloseComponent();
 
+		if (!_ownsOverlay)
+		{
+			return;
+		}
+
 		var status = Runtime.Status;
-		if (_ownsOverlay && status is not null && !ReferenceEquals(status, _dismissedStatus))
+		if (status is not null && !ReferenceEquals(status, _dismissedStatus))
 		{
 			BuildOverlay(builder, status);
 		}
+
+		BuildFreshStartButton(builder);
+	}
+
+	/// <summary>
+	/// A small, always available button for when the page got into a weird state (see <see cref="HotReloadRuntime.RequestFreshStartAsync"/>).
+	/// </summary>
+	private void BuildFreshStartButton(RenderTreeBuilder builder)
+	{
+		builder.OpenElement(30, "style");
+		builder.AddContent(31, ".dtr-hotreload-fresh{opacity:.35}.dtr-hotreload-fresh:hover{opacity:1}");
+		builder.CloseElement();
+
+		builder.OpenElement(32, "div");
+		builder.AddAttribute(33, "class", "dtr-hotreload-fresh");
+		builder.AddAttribute(
+			34,
+			"style",
+			"position:fixed;left:12px;bottom:12px;z-index:2147483647;cursor:pointer;user-select:none;"
+				+ "font:14px/1 monospace;padding:6px 8px;border-radius:12px;background:#1e1e1e;color:#eee;box-shadow:0 2px 8px rgba(0,0,0,.4)"
+		);
+		builder.AddAttribute(35, "title", FreshStartTitle);
+		builder.AddAttribute(36, "onclick", EventCallback.Factory.Create<MouseEventArgs>(this, Runtime.RequestFreshStartAsync));
+		builder.AddContent(37, "⟳");
+		builder.CloseElement();
 	}
 
 	/// <summary>
@@ -182,18 +220,24 @@ public sealed class HotReloadRoot : IComponent, IDisposable
 		builder.AddContent(15, status.Message);
 		builder.CloseElement();
 		builder.OpenElement(16, "span");
-		builder.AddAttribute(17, "style", "cursor:pointer;opacity:.7");
-		builder.AddAttribute(18, "title", "Dismiss");
-		builder.AddAttribute(19, "onclick", EventCallback.Factory.Create<MouseEventArgs>(this, () => Dismiss(status)));
-		builder.AddContent(20, "✕");
+		builder.AddAttribute(17, "style", "cursor:pointer;opacity:.7;white-space:nowrap;margin-left:auto");
+		builder.AddAttribute(18, "title", FreshStartTitle);
+		builder.AddAttribute(19, "onclick", EventCallback.Factory.Create<MouseEventArgs>(this, Runtime.RequestFreshStartAsync));
+		builder.AddContent(20, "⟳ fresh start");
+		builder.CloseElement();
+		builder.OpenElement(21, "span");
+		builder.AddAttribute(22, "style", "cursor:pointer;opacity:.7");
+		builder.AddAttribute(23, "title", "Dismiss");
+		builder.AddAttribute(24, "onclick", EventCallback.Factory.Create<MouseEventArgs>(this, () => Dismiss(status)));
+		builder.AddContent(25, "✕");
 		builder.CloseElement();
 		builder.CloseElement();
 
 		if (status.Details.Count > 0)
 		{
-			builder.OpenElement(21, "pre");
-			builder.AddAttribute(22, "style", "white-space:pre-wrap;margin:6px 0 0");
-			builder.AddContent(23, string.Join('\n', status.Details));
+			builder.OpenElement(26, "pre");
+			builder.AddAttribute(27, "style", "white-space:pre-wrap;margin:6px 0 0");
+			builder.AddContent(28, string.Join('\n', status.Details));
 			builder.CloseElement();
 		}
 

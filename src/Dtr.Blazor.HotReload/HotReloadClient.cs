@@ -28,6 +28,7 @@ internal sealed class HotReloadClient : IAsyncDisposable
 	private int _serverGeneration;
 	private int _appliedDeltas;
 	private bool _reportedUnreachable;
+	private bool _freshStartRequested;
 	private Task? _loop;
 	private ClientWebSocket? _socket;
 	private IJSObjectReference? _module;
@@ -54,6 +55,25 @@ internal sealed class HotReloadClient : IAsyncDisposable
 	/// Asks the server for a full swap (a new generation, compiled from scratch).
 	/// </summary>
 	public Task RequestRestartAsync() => SendAsync(new { type = "restart" });
+
+	/// <summary>
+	/// For when the page got into a weird state: asks the server for a full swap, and reloads the page once it's there (instead of
+	/// swapping it in), so everything starts over (DOM, JS, state, no old generations), running the latest code.
+	/// Without a connection to the server, just reloads the page.
+	/// </summary>
+	public async Task RequestFreshStartAsync()
+	{
+		if (_socket is not { State: WebSocketState.Open })
+		{
+			await ReloadPageAsync().ConfigureAwait(true);
+			return;
+		}
+
+		Console.WriteLine("[hotreload] Fresh start requested");
+		_freshStartRequested = true;
+		_runtime.SetStatus(new HotReloadStatus(HotReloadStatusKind.Compiling, "Hot reload: compiling a fresh version...", []));
+		await RequestRestartAsync().ConfigureAwait(true);
+	}
 
 	/// <summary>
 	/// Cancels the loop and waits for it, so the socket and HTTP client aren't used after disposal.
@@ -206,6 +226,11 @@ internal sealed class HotReloadClient : IAsyncDisposable
 				_runtime.SetStatus(new HotReloadStatus(HotReloadStatusKind.Applied, "Hot reload: no changes to apply", []));
 				break;
 
+			// After a fresh start request, the reloaded page catches up with this generation.
+			case "update" when _freshStartRequested:
+				await ReloadPageAsync().ConfigureAwait(true);
+				break;
+
 			case "update":
 				await ApplyGenerationAsync(message.Generation, message.Assemblies).ConfigureAwait(true);
 				break;
@@ -215,6 +240,8 @@ internal sealed class HotReloadClient : IAsyncDisposable
 				break;
 
 			case "errors":
+				// Nothing fresh to start over with: the code doesn't compile.
+				_freshStartRequested = false;
 				var details = (message.Diagnostics ?? []).Select(d => d.ToString()).ToList();
 				Console.WriteLine($"[hotreload] Compilation failed:\n{string.Join('\n', details)}");
 				_runtime.SetStatus(
