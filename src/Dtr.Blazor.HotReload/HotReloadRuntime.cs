@@ -6,8 +6,6 @@ using System.Runtime.Loader;
 using Dtr.Blazor.HotReload.State;
 using Microsoft.AspNetCore.Components;
 using Microsoft.AspNetCore.Components.RenderTree;
-using Microsoft.AspNetCore.Components.WebAssembly.Hosting;
-using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace Dtr.Blazor.HotReload;
@@ -33,34 +31,39 @@ public sealed class HotReloadRuntime : IAsyncDisposable
 
 	private readonly AppEntryPoint _entryPoint;
 	private readonly Assembly _initialAssembly;
-	private readonly IConfiguration _configuration;
-	private readonly IWebAssemblyHostEnvironment _environment;
 	private readonly SemaphoreSlim _swapLock = new(1, 1);
 	private readonly List<HotReloadRoot> _roots = [];
+	private readonly SwappableServiceProvider _rootProvider;
 
 	private IReadOnlyList<ServiceDescriptor> _hostDescriptors = [];
+	private IServiceProvider? _hostRoot;
 	private ServiceProvider? _hostProvider;
-	private AsyncServiceScope _hostScope;
+	private AsyncServiceScope? _hostScope;
+	private bool _managesHostScope;
 	private AppGeneration? _current;
 	private Renderer? _renderer;
 	private HotReloadClient? _client;
 	private int _restartRequestedFor = -1;
 	private List<IComponent>? _componentsBeforeDelta;
 
-	internal HotReloadRuntime(
-		AppEntryPoint entryPoint,
-		Assembly initialAssembly,
-		IConfiguration configuration,
-		IWebAssemblyHostEnvironment environment,
-		HotReloadOptions options
-	)
+	internal HotReloadRuntime(AppEntryPoint entryPoint, Assembly initialAssembly, HotReloadOptions options)
 	{
 		_entryPoint = entryPoint;
 		_initialAssembly = initialAssembly;
-		_configuration = configuration;
-		_environment = environment;
+		_rootProvider = new SwappableServiceProvider(this, isRoot: true);
 		Options = options;
 	}
+
+	internal IServiceProvider RootProvider => _rootProvider;
+
+	/// <summary>
+	/// The host owns the page's scope (desktop), so a new page gets a new scope and a rebuilt generation.
+	/// Browser hosts build a single scope themselves, and we only forward it to the generations.
+	/// </summary>
+	internal bool ManagesHostScope => _managesHostScope;
+
+	private IServiceProvider HostServices =>
+		(_hostScope ?? throw new InvalidOperationException("Hot reload has not been initialized yet.")).ServiceProvider;
 
 	internal event Action? StatusChanged;
 
@@ -208,7 +211,11 @@ public sealed class HotReloadRuntime : IAsyncDisposable
 			await _current.DisposeAsync().ConfigureAwait(false);
 		}
 
-		await _hostScope.DisposeAsync().ConfigureAwait(false);
+		if (_hostScope is { } hostScope)
+		{
+			await hostScope.DisposeAsync().ConfigureAwait(false);
+		}
+
 		if (_hostProvider is not null)
 		{
 			await _hostProvider.DisposeAsync().ConfigureAwait(false);
@@ -219,12 +226,14 @@ public sealed class HotReloadRuntime : IAsyncDisposable
 
 	/// <summary>
 	/// Called by the container factory, with the services that were registered on the host builder (i.e. the "host" tier).
+	/// The browser host builds the container itself, and returns a provider that forwards to the current generation.
 	/// </summary>
 	internal IServiceProvider Initialize(IServiceCollection hostServices)
 	{
 		_hostDescriptors = [.. hostServices];
 		_hostProvider = hostServices.BuildServiceProvider();
 		_hostScope = _hostProvider.CreateAsyncScope();
+		_managesHostScope = false;
 
 		// Generation 0 is built the exact same way as all the next ones, so problems with that show up right away.
 		_current = BuildGeneration(
@@ -233,7 +242,88 @@ public sealed class HotReloadRuntime : IAsyncDisposable
 			new Dictionary<string, Assembly>(StringComparer.OrdinalIgnoreCase) { [_initialAssembly.GetName().Name!] = _initialAssembly }
 		);
 
-		return new SwappableServiceProvider(this, isRoot: true);
+		return _rootProvider;
+	}
+
+	/// <summary>
+	/// Called by the desktop host: the host provider already exists, and owns the page scope. That scope is created lazily
+	/// (see <see cref="CreateHostScope"/>) because the WebView manager constructs a page scope when the page attaches.
+	/// </summary>
+	internal void InitializeHost(IServiceProvider hostRoot, IReadOnlyList<ServiceDescriptor> hostDescriptors)
+	{
+		_hostRoot = hostRoot;
+		_hostDescriptors = hostDescriptors;
+		_managesHostScope = true;
+	}
+
+	/// <summary>
+	/// Desktop page attach/reload: the WebView creates a new scope, so give it a scope of the real host provider, and rebuild the
+	/// current generation on top of it. The assemblies are kept: deltas that were applied in place stay applied, and the client keeps
+	/// its sequence counters (so it won't try to apply them again).
+	/// </summary>
+	internal SwappableServiceProvider CreateHostScope()
+	{
+		var hostRoot = _hostRoot ?? throw new InvalidOperationException("The host service provider has not been set.");
+		var scope = hostRoot.GetRequiredService<IServiceScopeFactory>().CreateAsyncScope();
+		var previousScope = _hostScope;
+		var previous = _current;
+
+		_hostScope = scope;
+		_renderer = null;
+		_roots.Clear();
+		HasOverlayOwner = false;
+		PendingState = null;
+		_componentsBeforeDelta = null;
+		_restartRequestedFor = -1;
+		SetStatus(null);
+
+		try
+		{
+			_current = previous is null
+				? BuildGeneration(
+					0,
+					_initialAssembly,
+					new Dictionary<string, Assembly>(StringComparer.OrdinalIgnoreCase) { [_initialAssembly.GetName().Name!] = _initialAssembly }
+				)
+				// The assemblies stay as they are, and the page's component tree starts over, so the generation count starts over too.
+				: BuildGeneration(0, previous.Assembly, previous.Assemblies);
+		}
+		catch
+		{
+			_hostScope = previousScope;
+			_current = previous;
+			scope.Dispose();
+			throw;
+		}
+
+		if (previous is not null)
+		{
+			Console.WriteLine("[hotreload] Page reloaded, current code ready");
+			_ = DisposeGenerationAsync(previous, previousScope);
+		}
+
+		// The desktop host starts generation 0 itself (the app cannot: it only sees the host's services), so initialize it here.
+		InvokeInitializeServices(_current);
+
+		_client?.Reattach(scope.ServiceProvider);
+
+		return new SwappableServiceProvider(this, isRoot: false);
+	}
+
+	private static async Task DisposeGenerationAsync(AppGeneration generation, AsyncServiceScope? scope)
+	{
+		try
+		{
+			await generation.DisposeAsync().ConfigureAwait(false);
+			if (scope is { } hostScope)
+			{
+				await hostScope.DisposeAsync().ConfigureAwait(false);
+			}
+		}
+		catch (Exception ex)
+		{
+			Console.WriteLine($"[hotreload] Could not dispose the previous page: {ex}");
+		}
 	}
 
 	/// <summary>
@@ -254,8 +344,11 @@ public sealed class HotReloadRuntime : IAsyncDisposable
 		// Make sure that poking the renderer works, before anyone tries to hot reload anything.
 		_ = GetCascadingValueSuppliersField();
 
-		_client = new HotReloadClient(this, _hostScope.ServiceProvider);
-		_client.Start();
+		if (_client is null)
+		{
+			_client = new HotReloadClient(this, HostServices);
+			_client.Start();
+		}
 	}
 
 	internal void Detach(HotReloadRoot root) => _roots.Remove(root);
@@ -264,9 +357,27 @@ public sealed class HotReloadRuntime : IAsyncDisposable
 	/// Resolves the root component by name in the current generation. Generations load their own copies of the app and changed
 	/// libraries, so the type must not be cached: every swap may bring a new version.
 	/// </summary>
-	internal Type GetRootType(string typeName) =>
-		Current.Assembly.GetType(typeName, throwOnError: false)
-		?? throw new InvalidOperationException($"Root component '{typeName}' was not found in generation {Current.Number}.");
+	internal Type GetRootType(string typeName)
+	{
+		foreach (var assembly in Current.Assemblies.Values)
+		{
+			if (assembly.GetType(typeName, throwOnError: false) is { } type)
+			{
+				return type;
+			}
+		}
+
+		// The root component doesn't have to be in the app assembly: a desktop host's root usually lives in a referenced library.
+		foreach (var assembly in AssemblyLoadContext.Default.Assemblies)
+		{
+			if (assembly.GetType(typeName, throwOnError: false) is { } type)
+			{
+				return type;
+			}
+		}
+
+		throw new InvalidOperationException($"Root component '{typeName}' was not found in generation {Current.Number}.");
+	}
 
 	internal void SetStatus(HotReloadStatus? status)
 	{
@@ -352,7 +463,7 @@ public sealed class HotReloadRuntime : IAsyncDisposable
 	/// </summary>
 	private void ForwardHostServices(IServiceCollection services)
 	{
-		var hostServices = _hostScope.ServiceProvider;
+		var hostServices = HostServices;
 		var resolved = new Dictionary<(Type, object?), List<object?>>();
 
 		foreach (var descriptor in _hostDescriptors)
@@ -374,7 +485,7 @@ public sealed class HotReloadRuntime : IAsyncDisposable
 				{
 					var enumerableType = typeof(IEnumerable<>).MakeGenericType(descriptor.ServiceType);
 					var all = descriptor.IsKeyedService
-						? hostServices.GetKeyedService(enumerableType, descriptor.ServiceKey)
+						? ((IKeyedServiceProvider)hostServices).GetKeyedService(enumerableType, descriptor.ServiceKey)
 						: hostServices.GetService(enumerableType);
 					instances = ((IEnumerable)all!).Cast<object?>().ToList();
 				}
@@ -420,22 +531,19 @@ public sealed class HotReloadRuntime : IAsyncDisposable
 			assembly.GetType(_entryPoint.TypeName, throwOnError: false)
 			?? throw new InvalidOperationException($"Type '{_entryPoint.TypeName}' was not found in the app assembly.");
 
+		var parameterTypes = new[] { typeof(IServiceCollection) }.Concat(_entryPoint.ParameterTypes).ToArray();
 		var method =
-			type.GetMethod(
-				_entryPoint.MethodName,
-				BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic,
-				[typeof(IServiceCollection), typeof(IConfiguration), typeof(IWebAssemblyHostEnvironment)]
-			)
+			type.GetMethod(_entryPoint.MethodName, BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic, parameterTypes)
 			?? throw new InvalidOperationException(
 				$"Method '{_entryPoint.TypeName}.{_entryPoint.MethodName}' (with the original signature) was not found in the app assembly."
 			);
 
-		Invoke(method, [services, _configuration, _environment]);
+		Invoke(method, [services, .. _entryPoint.Arguments]);
 	}
 
 	/// <summary>
 	/// Static state in a new generation's assemblies starts out fresh (e.g. <c>Dtr.Utils.Log</c>), give the app a chance to set it up.
-	/// Generation 0 is initialized by the app itself.
+	/// Generation 0 is initialized by the app itself (browser), or by <see cref="CreateHostScope"/> when the page attaches (desktop).
 	/// </summary>
 	private void InvokeInitializeServices(AppGeneration generation)
 	{

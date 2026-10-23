@@ -1,0 +1,34 @@
+<Project Sdk="Microsoft.NET.Sdk.Razor">
+	<!--
+		Desktop (Photino BlazorWebView) side of the hot reload (see README.md): reference this from the desktop host, in Debug builds only.
+		Shares the runtime with the browser package; only the host integration differs (no JavaScript initializer, and the WebView's
+		page scope is owned by the host).
+	-->
+	<PropertyGroup>
+		<AssemblyName>Dtr.Blazor.HotReload.Desktop</AssemblyName>
+		<RootNamespace>Dtr.Blazor.HotReload</RootNamespace>
+		<IsPackable>true</IsPackable>
+		<PackageId>Dtr.Blazor.HotReload.Desktop</PackageId>
+		<Description>Hot reload for Photino Blazor desktop apps that applies (almost) any change while the app runs: in place where possible (keeping all state), otherwise by swapping in a new version of the app (carrying over state). Use together with the Dtr.Blazor.HotReload.Server tool. Reference it in Debug builds only.</Description>
+		<!-- Ship the PDB in the package, for line numbers in stack traces -->
+		<DebugType>portable</DebugType>
+		<AllowedOutputExtensionsInPackageBuildOutputFolder>$(AllowedOutputExtensionsInPackageBuildOutputFolder);.pdb</AllowedOutputExtensionsInPackageBuildOutputFolder>
+	</PropertyGroup>
+	<ItemGroup>
+		<InternalsVisibleTo Include="Dtr.Blazor.HotReload.UnitTest" />
+	</ItemGroup>
+	<ItemGroup>
+		<!-- The shared runtime, without the WebAssembly-specific host integration. -->
+		<Compile
+			Include="..\Dtr.Blazor.HotReload\**\*.cs"
+			Exclude="..\Dtr.Blazor.HotReload\HotReloadHostBuilderExtensions.cs;..\Dtr.Blazor.HotReload\HotReloadServiceProviderFactory.cs;..\Dtr.Blazor.HotReload\obj\**;..\Dtr.Blazor.HotReload\bin\**"
+			Link="Shared\%(RecursiveDir)%(Filename)%(Extension)"
+		/>
+		<Content Include="..\Dtr.Blazor.HotReload\wwwroot\hotreload.js" Link="wwwroot\hotreload.js" />
+		<!-- Imported into the build of the (directly) referencing app; the file name has to match the package id. -->
+		<None Include="..\Dtr.Blazor.HotReload\build\Dtr.Blazor.HotReload.targets" Pack="true" PackagePath="build/Dtr.Blazor.HotReload.Desktop.targets" />
+	</ItemGroup>
+	<ItemGroup>
+		<PackageReference Include="Photino.Blazor" />
+	</ItemGroup>
+</Project>

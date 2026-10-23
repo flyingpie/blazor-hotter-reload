@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk.Web">
 	<!--
 		The hot reload server (see README.md), shipped as a .NET tool: watches the app's sources (and those of the libraries it uses),
-		compiles every change in-memory, and pushes it to the browser.
+		compiles every change in-memory, and pushes it to the client.
 	-->
 	<PropertyGroup>
 		<AssemblyName>Dtr.Blazor.HotReload.Server</AssemblyName>
@@ -11,7 +11,7 @@
 		<PackAsTool>true</PackAsTool>
 		<ToolCommandName>dtr-blazor-hotreload</ToolCommandName>
 		<PackageId>Dtr.Blazor.HotReload.Server</PackageId>
-		<Description>The server side of Dtr.Blazor.HotReload, as a .NET tool (dtr-blazor-hotreload): watches a Blazor WebAssembly app and the libraries it uses, compiles every change in-memory (as an in-place update where possible), and pushes it to the browser.</Description>
+		<Description>The server side of Dtr.Blazor.HotReload, as a .NET tool (dtr-blazor-hotreload): watches a Blazor WebAssembly or Photino desktop app and the libraries it uses, compiles every change in-memory (as an in-place update where possible), and pushes it to the client.</Description>
 	</PropertyGroup>
 	<ItemGroup>
 		<!--

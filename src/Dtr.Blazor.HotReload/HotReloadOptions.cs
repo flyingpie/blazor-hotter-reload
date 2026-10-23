@@ -20,6 +20,11 @@ public sealed record HotReloadOptions
 	public int MaxGenerations { get; init; } = 30;
 
 	/// <summary>
+	/// URL of the JS module that talks to the hot reload server. The WebAssembly and desktop packages ship their own copy.
+	/// </summary>
+	public string ScriptModulePath { get; init; } = "./_content/Dtr.Blazor.HotReload/hotreload.js";
+
+	/// <summary>
 	/// Reads the optional settings from the "HotReload" configuration section, falling back to the defaults for missing or
 	/// invalid values.
 	/// </summary>

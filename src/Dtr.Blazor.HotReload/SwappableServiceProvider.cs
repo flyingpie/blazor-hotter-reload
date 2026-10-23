@@ -57,9 +57,18 @@ internal sealed class SwappableServiceProvider
 		((IKeyedServiceProvider)Current).GetRequiredKeyedService(serviceType, serviceKey);
 
 	/// <summary>
-	/// Only reachable through the root instance; creates the (single) renderer scope.
+	/// Only reachable through the root instance. In the browser this creates the (single) renderer scope; on the desktop
+	/// a new page attach asks for a new scope, which gets a real host scope under it.
 	/// </summary>
-	public IServiceScope CreateScope() => new SwappableServiceProvider(_runtime, isRoot: false);
+	public IServiceScope CreateScope()
+	{
+		if (_isRoot && _runtime.ManagesHostScope)
+		{
+			return _runtime.CreateHostScope();
+		}
+
+		return new SwappableServiceProvider(_runtime, isRoot: false);
+	}
 
 	public void Dispose()
 	{

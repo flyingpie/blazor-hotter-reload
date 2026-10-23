@@ -90,10 +90,14 @@ public static class HotReloadHostBuilderExtensions
 		}
 
 		var runtime = new HotReloadRuntime(
-			new AppEntryPoint(method.DeclaringType.FullName!, method.Name, initializeServices?.Method.Name),
+			new AppEntryPoint(
+				method.DeclaringType.FullName!,
+				method.Name,
+				[typeof(IConfiguration), typeof(IWebAssemblyHostEnvironment)],
+				[builder.Configuration, builder.HostEnvironment],
+				initializeServices?.Method.Name
+			),
 			appAssembly,
-			builder.Configuration,
-			builder.HostEnvironment,
 			HotReloadOptions.FromConfiguration(builder.Configuration)
 		);
 

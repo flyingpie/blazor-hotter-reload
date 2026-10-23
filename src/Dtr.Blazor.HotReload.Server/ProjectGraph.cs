@@ -3,7 +3,7 @@ using System.Text.Json;
 namespace Dtr.Blazor.HotReload.Server;
 
 /// <summary>
-/// Finds the libraries (project references) that the app ships to the browser, and gets their compiler command lines.
+/// Finds the libraries (project references) that the app ships, and gets their compiler command lines.
 /// <para>
 /// The app's command line comes from its last build (see Dtr.Blazor.HotReload.targets). For the libraries, we do a "design-time" compile:
 /// MSBuild runs the compile targets, but instead of compiling, hands us the command line. That's how IDEs do it, and it means the
@@ -17,7 +17,11 @@ internal static class ProjectGraph
 	/// <summary>
 	/// Projects that must never be hot reloaded (they are part of the hot reload machinery itself).
 	/// </summary>
-	private static readonly HashSet<string> ExcludedProjects = new(StringComparer.OrdinalIgnoreCase) { "Dtr.Blazor.HotReload.csproj" };
+	private static readonly HashSet<string> ExcludedProjects = new(StringComparer.OrdinalIgnoreCase)
+	{
+		"Dtr.Blazor.HotReload.csproj",
+		"Dtr.Blazor.HotReload.Desktop.csproj",
+	};
 
 	/// <summary>
 	/// Returns the hot projects in dependency order: libraries first, the app last.

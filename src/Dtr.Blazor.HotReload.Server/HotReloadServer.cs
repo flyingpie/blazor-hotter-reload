@@ -44,7 +44,7 @@ internal static class HotReloadServer
 					return;
 				}
 
-				// Also stop when the server stops, otherwise shutting down waits for the browsers to disconnect.
+				// Also stop when the server stops, otherwise shutting down waits for the clients to disconnect.
 				var stopping = context.RequestServices.GetRequiredService<IHostApplicationLifetime>().ApplicationStopping;
 				using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(context.RequestAborted, stopping);
 				using var socket = await context.WebSockets.AcceptWebSocketAsync().ConfigureAwait(false);

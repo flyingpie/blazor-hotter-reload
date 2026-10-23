@@ -4,16 +4,20 @@ using System.Net.Http;
 namespace Dtr.Blazor.HotReload.Server;
 
 /// <summary>
-/// Runs the app's own dev server ("dotnet run" of the app, i.e. the Blazor WebAssembly DevServer) as a child process.
-/// That one only reads the static asset manifest on startup, so it needs a restart after every regular build; we take care of that.
+/// Runs the app itself ("dotnet run") as a child process, and restarts it after every regular build.
+/// <para>
+/// For a Blazor WebAssembly app this is the DevServer, which only reads the static asset manifest on startup, so it needs a restart
+/// after every build. For a desktop app there is no URL to wait for: the process itself is the app.
+/// </para>
 /// </summary>
-internal sealed class DevServerProcess(ProjectLocation location, string? launchProfile, Uri url) : IDisposable
+internal sealed class DevServerProcess(ProjectLocation location, string? launchProfile, Uri? url) : IDisposable
 {
 	private static readonly TimeSpan StartTimeout = TimeSpan.FromSeconds(60);
+	private static readonly TimeSpan DesktopStartGracePeriod = TimeSpan.FromSeconds(1);
 
 	private Process? _process;
 
-	public Uri Url { get; } = url;
+	public Uri? Url { get; } = url;
 
 	/// <summary>
 	/// Starts "dotnet run --no-build" for the app. The hot reload server already compiles, so there is no need to build again.
@@ -29,8 +33,21 @@ internal sealed class DevServerProcess(ProjectLocation location, string? launchP
 			startInfo.ArgumentList.Add(arg);
 		}
 
-		Log.Info($"Starting dev server ({Url})...");
+		Log.Info(Url is null ? "Starting the app..." : $"Starting dev server ({Url})...");
 		_process = Process.Start(startInfo) ?? throw new InvalidOperationException("Could not start the dev server.");
+
+		// No URL (desktop): give it a moment to fail on startup, then assume it is fine. There is nothing to poll.
+		if (Url is null)
+		{
+			await Task.Delay(DesktopStartGracePeriod, token).ConfigureAwait(false);
+			if (_process.HasExited)
+			{
+				throw new InvalidOperationException($"The app exited with code {_process.ExitCode}.");
+			}
+
+			Log.Success("App started");
+			return;
+		}
 
 		// Web app: poll until it answers. A browser refresh before the server is ready would show a connection error.
 		using var http = new HttpClient();
