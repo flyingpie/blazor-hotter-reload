@@ -246,6 +246,28 @@ public sealed class HotReloadRuntime : IAsyncDisposable
 	}
 
 	/// <summary>
+	/// Called by the container factory of a desktop host that builds the host provider itself (PhotinoX): the host owns the page scope.
+	/// Generation 0 is built right away, because the host resolves services from the root provider before the first page attaches;
+	/// <see cref="CreateHostScope"/> rebuilds it on a real host scope when the page attaches.
+	/// </summary>
+	internal IServiceProvider InitializeDesktop(IServiceCollection hostServices)
+	{
+		_hostDescriptors = [.. hostServices];
+		_hostProvider = hostServices.BuildServiceProvider();
+		_hostRoot = _hostProvider;
+		_hostScope = _hostProvider.CreateAsyncScope();
+		_managesHostScope = true;
+
+		_current = BuildGeneration(
+			0,
+			_initialAssembly,
+			new Dictionary<string, Assembly>(StringComparer.OrdinalIgnoreCase) { [_initialAssembly.GetName().Name!] = _initialAssembly }
+		);
+
+		return _rootProvider;
+	}
+
+	/// <summary>
 	/// Called by the desktop host: the host provider already exists, and owns the page scope. That scope is created lazily
 	/// (see <see cref="CreateHostScope"/>) because the WebView manager constructs a page scope when the page attaches.
 	/// </summary>

@@ -39,7 +39,8 @@ internal sealed class SwappableServiceProvider
 			return this;
 		}
 
-		// The host asks the root provider for a scope factory, to create the one scope that the renderer uses.
+		// The host asks the root provider for a scope factory, to create the one scope that the renderer uses. On the desktop
+		// this is also how a new page gets a new host scope.
 		if (_isRoot && serviceType == typeof(IServiceScopeFactory))
 		{
 			return this;

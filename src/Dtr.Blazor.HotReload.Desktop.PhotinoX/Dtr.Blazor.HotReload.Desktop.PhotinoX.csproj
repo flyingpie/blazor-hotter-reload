@@ -1,0 +1,78 @@
+<Project Sdk="Microsoft.NET.Sdk.Razor">
+	<!--
+		PhotinoX side of the hot reload (see README.md): reference this from a PhotinoX Blazor desktop host, in Debug builds only.
+		Shares the runtime with the browser package; only the host integration differs.
+	-->
+	<PropertyGroup>
+		<AssemblyName>Dtr.Blazor.HotReload.Desktop.PhotinoX</AssemblyName>
+		<RootNamespace>Dtr.Blazor.HotReload</RootNamespace>
+		<IsPackable>true</IsPackable>
+		<PackageId>Dtr.Blazor.HotReload.Desktop.PhotinoX</PackageId>
+		<Description>Hot reload for PhotinoX Blazor desktop apps that applies (almost) any change while the app runs: in place where possible (keeping all state), otherwise by swapping in a new version of the app (carrying over state). Use together with the Dtr.Blazor.HotReload.Server tool. Reference it in Debug builds only.</Description>
+		<!-- Ship the PDB in the package, for line numbers in stack traces -->
+		<DebugType>portable</DebugType>
+		<AllowedOutputExtensionsInPackageBuildOutputFolder>$(AllowedOutputExtensionsInPackageBuildOutputFolder);.pdb</AllowedOutputExtensionsInPackageBuildOutputFolder>
+	</PropertyGroup>
+	<ItemGroup>
+		<InternalsVisibleTo Include="Dtr.Blazor.HotReload.UnitTest" />
+	</ItemGroup>
+	<ItemGroup>
+		<!-- The shared runtime, without the WebAssembly-specific host integration. -->
+		<Compile
+			Include="..\Dtr.Blazor.HotReload\**\*.cs"
+			Exclude="..\Dtr.Blazor.HotReload\HotReloadHostBuilderExtensions.cs;..\Dtr.Blazor.HotReload\obj\**;..\Dtr.Blazor.HotReload\bin\**"
+			Link="Shared\%(RecursiveDir)%(Filename)%(Extension)"
+		/>
+		<!-- Imported into the build of the (directly) referencing app; the file name has to match the package id. -->
+		<None Include="..\Dtr.Blazor.HotReload\build\Dtr.Blazor.HotReload.targets" Pack="true" PackagePath="build/Dtr.Blazor.HotReload.Desktop.PhotinoX.targets" />
+	</ItemGroup>
+	<ItemGroup>
+		<PackageReference Include="PhotinoX.Blazor" />
+		<!--
+			PhotinoX.Blazor brings WebView's buildTransitive props along, which add the WebView assets (blazor.webview.js and
+			blazor.modules.json) to this library. The app already ships them, so including them here conflicts when this project is
+			referenced directly (instead of through the package).
+		-->
+		<PackageReference
+			Include="Microsoft.AspNetCore.Components.WebView"
+			ExcludeAssets="build;buildTransitive;buildMultiTargeting"
+			PrivateAssets="all"
+		/>
+	</ItemGroup>
+
+	<!--
+		The script lives next to the shared runtime, outside this project. A linked Content item would be discovered under this
+		project's (non-existent) wwwroot, which breaks direct project references at runtime, so define the static web asset
+		against the real file instead.
+	-->
+	<Target
+		Name="AddHotReloadStaticWebAsset"
+		BeforeTargets="ResolveProjectStaticWebAssets"
+		DependsOnTargets="ResolveStaticWebAssetsConfiguration"
+	>
+		<ItemGroup>
+			<_HotReloadStaticWebAssetCandidate Include="$(MSBuildThisFileDirectory)..\Dtr.Blazor.HotReload\wwwroot\hotreload.js">
+				<RelativePath>hotreload.js</RelativePath>
+				<ContentRoot>$(MSBuildThisFileDirectory)..\Dtr.Blazor.HotReload\wwwroot\</ContentRoot>
+			</_HotReloadStaticWebAssetCandidate>
+		</ItemGroup>
+
+		<DefineStaticWebAssets
+			CandidateAssets="@(_HotReloadStaticWebAssetCandidate)"
+			FingerprintCandidates="$(StaticWebAssetsFingerprintContent)"
+			FingerprintPatterns="@(StaticWebAssetFingerprintPattern)"
+			SourceType="Discovered"
+			SourceId="$(PackageId)"
+			ContentRoot="$(MSBuildThisFileDirectory)..\Dtr.Blazor.HotReload\wwwroot\"
+			BasePath="$(StaticWebAssetBasePath)"
+			AssetMergeSource="$(StaticWebAssetMergeTarget)"
+		>
+			<Output TaskParameter="Assets" ItemName="_HotReloadStaticWebAsset" />
+		</DefineStaticWebAssets>
+
+		<ItemGroup>
+			<StaticWebAsset Include="@(_HotReloadStaticWebAsset)" />
+			<_CurrentProjectStaticWebAsset Include="@(_HotReloadStaticWebAsset)" />
+		</ItemGroup>
+	</Target>
+</Project>
