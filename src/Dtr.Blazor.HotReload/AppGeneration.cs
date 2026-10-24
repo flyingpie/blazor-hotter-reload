@@ -35,6 +35,10 @@ public sealed class AppGeneration : IAsyncDisposable
 	/// </summary>
 	public IServiceProvider Services => _scope.ServiceProvider;
 
+	/// <summary>
+	/// Disposes the scope first, then the root container. Both only contain this generation's services; forwarded host-tier
+	/// instances are registered as instances, so the host container still owns (and disposes) them.
+	/// </summary>
 	public async ValueTask DisposeAsync()
 	{
 		await _scope.DisposeAsync().ConfigureAwait(false);
