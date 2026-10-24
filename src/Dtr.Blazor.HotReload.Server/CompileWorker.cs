@@ -20,9 +20,13 @@ internal sealed class CompileWorker : IDisposable
 {
 	private static readonly char[] PathSeparators = [Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar];
 	private static readonly TimeSpan SourceDebounce = TimeSpan.FromMilliseconds(100);
+	private static readonly TimeSpan ScopedCssDebounce = TimeSpan.FromMilliseconds(300);
 
 	// The build writes the intermediate assembly before copying everything to the output directory, give it some time.
 	private static readonly TimeSpan BuildDebounce = TimeSpan.FromSeconds(2);
+
+	// Our own build's file notifications can arrive after the process exits; ignore them for a moment too.
+	private static readonly TimeSpan OwnBuildGracePeriod = BuildDebounce + TimeSpan.FromSeconds(1);
 
 	private readonly ProjectLocation _location;
 	private readonly HotReloadHub _hub;
@@ -41,7 +45,10 @@ internal sealed class CompileWorker : IDisposable
 	private string? _capabilities;
 	private bool _assetsChanged;
 	private bool _buildChanged;
+	private bool _scopedCssChanged;
+	private bool _buildingScopedCss;
 	private bool _fullSwapRequested;
+	private DateTime _ignoreBuildOutputUntil;
 	private Timer? _debounce;
 
 	public CompileWorker(ProjectLocation location, HotReloadHub hub, DevServerProcess? devServer)
@@ -69,6 +76,7 @@ internal sealed class CompileWorker : IDisposable
 			// the sets, so changes that arrive while we compile are handled in the next iteration.
 			bool assets,
 				build,
+				scopedCss,
 				fullSwap;
 			string[] css,
 				changedProjects,
@@ -76,11 +84,17 @@ internal sealed class CompileWorker : IDisposable
 			string? capabilities;
 			lock (_lock)
 			{
-				(assets, build, fullSwap, capabilities) = (_assetsChanged, _buildChanged, _fullSwapRequested, _capabilities);
+				(assets, build, scopedCss, fullSwap, capabilities) = (
+					_assetsChanged,
+					_buildChanged,
+					_scopedCssChanged,
+					_fullSwapRequested,
+					_capabilities
+				);
 				css = [.. _changedCss];
 				changedProjects = [.. _changedProjects];
 				changedFiles = [.. _changedFiles];
-				_assetsChanged = _buildChanged = _fullSwapRequested = false;
+				_assetsChanged = _buildChanged = _scopedCssChanged = _fullSwapRequested = false;
 				_changedCss.Clear();
 				_changedProjects.Clear();
 				_changedFiles.Clear();
@@ -91,6 +105,13 @@ internal sealed class CompileWorker : IDisposable
 				if (capabilities is not null && _deltas is { HasCapabilities: false })
 				{
 					_deltas.SetCapabilities(capabilities);
+				}
+
+				// Scoped CSS needs a real build, which also compiles any source changes in this batch.
+				if (scopedCss)
+				{
+					await BuildScopedCssAsync(token).ConfigureAwait(false);
+					continue;
 				}
 
 				if (build)
@@ -182,6 +203,72 @@ internal sealed class CompileWorker : IDisposable
 			await _devServer.RestartAsync(token).ConfigureAwait(false);
 			_hub.Broadcast(new { type = "reload" });
 		}
+	}
+
+	/// <summary>
+	/// Scoped CSS is generated at build time (the <c>b-...</c> attributes and the bundled stylesheet), so an in-memory compile
+	/// can't apply it. Build the app, then start over from the new output. The build's own output events are ignored: this
+	/// method handles that output itself.
+	/// </summary>
+	private async Task BuildScopedCssAsync(CancellationToken token)
+	{
+		Log.Info("Scoped CSS changed, building the app...");
+		_hub.Broadcast(new { type = "compiling" });
+
+		lock (_lock)
+		{
+			_buildingScopedCss = true;
+		}
+
+		try
+		{
+			// A desktop app keeps its output files open (on Windows), so stop it before the build replaces them.
+			_devServer?.Stop();
+
+			var (exitCode, _) = await DotnetCli
+				.RunAsync(["build", _location.ProjectFile, "-c", "Debug", "--nologo", "--no-restore"], echo: true)
+				.ConfigureAwait(false);
+			if (exitCode != 0)
+			{
+				Log.Error("Build failed, the app keeps running the previous version.");
+
+				_hub.Broadcast(
+					new
+					{
+						type = "errors",
+						diagnostics = new[]
+						{
+							new CompileDiagnostic(
+								Path.GetFileName(_location.ProjectFile),
+								1,
+								1,
+								"BUILD",
+								"Scoped CSS build failed, see the server console."
+							),
+						},
+					}
+				);
+
+				// We stopped it above, so bring the previous version back.
+				if (_devServer is not null)
+				{
+					await _devServer.StartAsync(token).ConfigureAwait(false);
+				}
+
+				return;
+			}
+		}
+		finally
+		{
+			lock (_lock)
+			{
+				_buildingScopedCss = false;
+				_buildChanged = false;
+				_ignoreBuildOutputUntil = DateTime.UtcNow + OwnBuildGracePeriod;
+			}
+		}
+
+		await OnBuildAsync(token).ConfigureAwait(false);
 	}
 
 	/// <summary>
@@ -478,8 +565,8 @@ internal sealed class CompileWorker : IDisposable
 	}
 
 	/// <summary>
-	/// Classifies a file change: CSS and other wwwroot assets are handled separately from source changes, and project files
-	/// need a regular build (which cannot be done by the in-memory compiler).
+	/// Classifies a file change: CSS and other wwwroot assets are handled separately from source changes; project files and
+	/// scoped CSS need a regular build (which cannot be done by the in-memory compiler).
 	/// </summary>
 	private void OnSourceChanged(string projectDirectory, string path)
 	{
@@ -487,6 +574,8 @@ internal sealed class CompileWorker : IDisposable
 		{
 			return;
 		}
+
+		var scopedCss = IsScopedCss(path);
 
 		lock (_lock)
 		{
@@ -498,7 +587,11 @@ internal sealed class CompileWorker : IDisposable
 
 			var extension = Path.GetExtension(path);
 			var wwwroot = Path.Combine(projectDirectory, "wwwroot");
-			if (path.StartsWith(wwwroot + Path.DirectorySeparatorChar, StringComparison.Ordinal))
+			if (scopedCss)
+			{
+				_scopedCssChanged = true;
+			}
+			else if (path.StartsWith(wwwroot + Path.DirectorySeparatorChar, StringComparison.Ordinal))
 			{
 				if (extension == ".css")
 				{
@@ -526,17 +619,33 @@ internal sealed class CompileWorker : IDisposable
 			}
 		}
 
-		Debounce(SourceDebounce);
+		Debounce(scopedCss ? ScopedCssDebounce : SourceDebounce);
+	}
+
+	/// <summary>
+	/// A scoped CSS file (<c>Component.razor.css</c> or <c>Page.cshtml.css</c>). The SDK generates the scoped attributes and
+	/// bundled stylesheet at build time, so the watcher treats it as a build request, not as a source file.
+	/// </summary>
+	private static bool IsScopedCss(string path)
+	{
+		var name = Path.GetFileName(path);
+		return name.EndsWith(".razor.css", StringComparison.OrdinalIgnoreCase)
+			|| name.EndsWith(".cshtml.css", StringComparison.OrdinalIgnoreCase);
 	}
 
 	/// <summary>
 	/// A regular build wrote a new assembly/boot config. Give the build time to finish copying all output files, then reset
-	/// from the new build.
+	/// from the new build. Our own scoped CSS build is handled by <see cref="BuildScopedCssAsync"/> instead.
 	/// </summary>
 	private void OnBuildOutputChanged()
 	{
 		lock (_lock)
 		{
+			if (_buildingScopedCss || DateTime.UtcNow < _ignoreBuildOutputUntil)
+			{
+				return;
+			}
+
 			_buildChanged = true;
 		}
 

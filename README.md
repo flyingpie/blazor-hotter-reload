@@ -215,11 +215,16 @@ The approach is the same as [s&box's hotload](https://github.com/Facepunch/sbox-
 | Method bodies, Razor markup, lambdas, added fields/methods/types (in the app or its libraries) | In place, all state kept (~0.5 s) |
 | Other changes in the app or its libraries: removed/renamed members, changed signatures, renamed enum values, DI registrations, ... | Full swap, state carried over where possible (~1-2 s) |
 | `wwwroot/**/*.css` | Hot (stylesheet is re-fetched) |
+| Scoped CSS (`.razor.css` / `.cshtml.css`, in the app or a library) | Builds the app (`dotnet build -c Debug --no-restore`), then restarts/reloads (~2-4 s) |
 | Other `wwwroot` files (`index.html`, `app.js`, ...) | Page reload (on the desktop: new page scope, same process) |
 | Compile error (in any of the projects) | Overlay with the errors; the app keeps running the previous version |
 | Unhandled exception while rendering | Shown in place of the app; fix it and save |
 | The page got into a weird state | Click `⟳` (fresh start): recompiles everything in memory and reloads the page (~2-4 s) |
-| Packages, csproj, or anything generated at build time only | Needs a regular build. The server notices, restarts the dev server (with `--devserver`), and reloads the page |
+| Packages, csproj, or anything else generated at build time only | Needs a regular build. The server notices, restarts the dev server (with `--devserver`), and reloads the page |
+
+Scoped CSS is generated at build time (the `b-...` attributes and the bundled stylesheet), so the server runs a real build
+for a saved `.razor.css`/`.cshtml.css`. The build is debounced, and the server resets and restarts from its output itself
+(instead of treating the build's own output as a regular build).
 
 The overlay tells which one happened ("applied in place, state kept", or "app restarted, state carried over ...").
 
