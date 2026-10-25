@@ -7,7 +7,7 @@ using Dtr.Blazor.HotReload.Server.Deltas;
 namespace Dtr.Blazor.HotReload.Server;
 
 /// <summary>
-/// Watches the app project and the libraries it ships to the browser, and turns file changes into updates for the browser:
+/// Watches the app project and the libraries it ships, and turns file changes into updates for the running client:
 /// <list type="number">
 /// <item>Preferably an in-place update (Edit-and-Continue delta): the running app is patched, and keeps all its state.</item>
 /// <item>Otherwise (e.g. "rude edits" like a changed method signature, or changes to the service registrations), a full swap:
@@ -26,7 +26,6 @@ internal sealed class CompileWorker : IDisposable
 
 	private readonly ProjectLocation _location;
 	private readonly HotReloadHub _hub;
-	private readonly string _wwwroot;
 	private readonly string _baselineDirectory;
 	private readonly Lock _lock = new();
 	private readonly SemaphoreSlim _signal = new(0);
@@ -50,7 +49,6 @@ internal sealed class CompileWorker : IDisposable
 		_location = location;
 		_hub = hub;
 		_devServer = devServer;
-		_wwwroot = Path.Combine(location.ProjectDirectory, "wwwroot");
 		_baselineDirectory = Path.Combine(Path.GetDirectoryName(location.IntermediateAssembly)!, "dtr-hotreload");
 		_hub.ClientMessage += OnClientMessage;
 	}
@@ -204,7 +202,7 @@ internal sealed class CompileWorker : IDisposable
 		var solution = HotSolution.Create(projects, _location.IntermediateAssembly);
 		await solution.WarmUpAsync().ConfigureAwait(false);
 
-		// The browser runs the build output, which is the baseline for the in-place updates.
+		// The client runs the build output, which is the baseline for the in-place updates.
 		var deltas = DeltaSession.TryCreate(solution.Solution.Services);
 		if (deltas is not null)
 		{
@@ -264,7 +262,7 @@ internal sealed class CompileWorker : IDisposable
 					changed.ForEach(p => p.HasErrors = false);
 					var names = string.Join(", ", result.Updates.Select(u => _solution.GetProject(u.ProjectId).Name));
 					Log.Success(
-						$"Update {_hub.Generation}.{sequence} applied in place ({names}) in {stopwatch.ElapsedMilliseconds} ms, sent to {_hub.ClientCount} browser(s)"
+						$"Update {_hub.Generation}.{sequence} applied in place ({names}) in {stopwatch.ElapsedMilliseconds} ms, sent to {_hub.ClientCount} client(s)"
 					);
 					return;
 
@@ -354,7 +352,7 @@ internal sealed class CompileWorker : IDisposable
 
 		Log.Success(
 			$"Generation {generation} compiled in {stopwatch.ElapsedMilliseconds} ms ({string.Join(", ", shipped.Select(p => p.Project.Name))}), "
-				+ $"app restarted in {_hub.ClientCount} browser(s)"
+				+ $"app restarted in {_hub.ClientCount} client(s)"
 		);
 	}
 
@@ -384,7 +382,7 @@ internal sealed class CompileWorker : IDisposable
 					// reloaded page may connect before the old one disconnects.
 					var supported = message.TryGetProperty("supported", out var s) && s.GetBoolean();
 					var capabilities = message.TryGetProperty("capabilities", out var c) ? c.GetString() : null;
-					Log.Info($"Browser supports in-place updates: {supported}{(supported ? $" ({capabilities})" : string.Empty)}");
+					Log.Info($"Client supports in-place updates: {supported}{(supported ? $" ({capabilities})" : string.Empty)}");
 					if (!supported || string.IsNullOrWhiteSpace(capabilities) || _capabilities is not null)
 					{
 						return;
@@ -397,8 +395,8 @@ internal sealed class CompileWorker : IDisposable
 				case "restart":
 					Log.Warning(
 						type == "restart"
-							? "Restart requested by the browser"
-							: "The browser could not apply an in-place update, restarting the app"
+							? "Restart requested by the client"
+							: "The client could not apply an in-place update, restarting the app"
 					);
 					_fullSwapRequested = true;
 					break;
@@ -438,24 +436,45 @@ internal sealed class CompileWorker : IDisposable
 			Log.Success($"Watching {directory}");
 		}
 
-		// The app assembly, and the boot config (which also changes when only static assets changed, e.g. in a library).
-		string[] buildOutputs = [Path.GetFileName(_location.IntermediateAssembly), "dotnet.js"];
-		var buildOutput = new FileSystemWatcher(Path.GetDirectoryName(_location.IntermediateAssembly)!)
+		// Every hot project's assembly: a regular build of the app also rebuilds the libraries, and the app assembly itself might not
+		// change (e.g. when only a library changed). Plus the WebAssembly boot config, which also changes when only static assets changed.
+		var outputs = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
+		void AddOutput(string directory, string fileName)
 		{
-			NotifyFilter = NotifyFilters.FileName | NotifyFilters.LastWrite | NotifyFilters.Size,
-		};
-		FileSystemEventHandler onChanged = (_, e) =>
-		{
-			if (buildOutputs.Contains(e.Name, StringComparer.Ordinal))
+			if (!outputs.TryGetValue(directory, out var files))
 			{
-				OnBuildOutputChanged();
+				outputs[directory] = files = new HashSet<string>(StringComparer.Ordinal);
 			}
-		};
-		buildOutput.Changed += onChanged;
-		buildOutput.Created += onChanged;
-		buildOutput.Renamed += (sender, e) => onChanged(sender, e);
-		buildOutput.EnableRaisingEvents = true;
-		_watchers.Add(buildOutput);
+
+			files.Add(fileName);
+		}
+
+		foreach (var project in _projects)
+		{
+			AddOutput(Path.GetDirectoryName(project.Project.ResponseFile)!, project.Project.AssemblyName + ".dll");
+		}
+
+		AddOutput(Path.GetDirectoryName(_location.IntermediateAssembly)!, "dotnet.js");
+
+		foreach (var (directory, files) in outputs)
+		{
+			var buildOutput = new FileSystemWatcher(directory)
+			{
+				NotifyFilter = NotifyFilters.FileName | NotifyFilters.LastWrite | NotifyFilters.Size,
+			};
+			FileSystemEventHandler onChanged = (_, e) =>
+			{
+				if (e.Name is not null && files.Contains(e.Name))
+				{
+					OnBuildOutputChanged();
+				}
+			};
+			buildOutput.Changed += onChanged;
+			buildOutput.Created += onChanged;
+			buildOutput.Renamed += (sender, e) => onChanged(sender, e);
+			buildOutput.EnableRaisingEvents = true;
+			_watchers.Add(buildOutput);
+		}
 	}
 
 	/// <summary>
@@ -478,11 +497,12 @@ internal sealed class CompileWorker : IDisposable
 			}
 
 			var extension = Path.GetExtension(path);
-			if (project.Project.IsApp && path.StartsWith(_wwwroot + Path.DirectorySeparatorChar, StringComparison.Ordinal))
+			var wwwroot = Path.Combine(projectDirectory, "wwwroot");
+			if (path.StartsWith(wwwroot + Path.DirectorySeparatorChar, StringComparison.Ordinal))
 			{
 				if (extension == ".css")
 				{
-					_changedCss.Add(Path.GetRelativePath(_wwwroot, path).Replace('\\', '/'));
+					_changedCss.Add(Path.GetRelativePath(wwwroot, path).Replace('\\', '/'));
 				}
 				else if (!Directory.Exists(path))
 				{
@@ -542,7 +562,7 @@ internal sealed class CompileWorker : IDisposable
 		public bool HasErrors { get; set; }
 
 		/// <summary>
-		/// Whether the browser runs a different version of this project than the build output (through in-place updates or a full swap).
+		/// Whether the client runs a different version of this project than the build output (through in-place updates or a full swap).
 		/// </summary>
 		public bool ChangedSinceBuild { get; set; }
 	}

@@ -32,7 +32,7 @@ public sealed record ProjectLocation(
 
 			if (!File.Exists(infoFile))
 			{
-				Log.Error($"'{infoFile}' still not found; does the project reference the Dtr.Blazor.HotReload package, and is it built in Debug?");
+				Log.Error($"'{infoFile}' still not found; does the project reference the Dtr.Blazor.HotReload (or .Desktop) package, and is it built in Debug?");
 				return null;
 			}
 		}

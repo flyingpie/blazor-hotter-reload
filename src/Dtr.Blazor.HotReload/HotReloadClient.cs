@@ -19,7 +19,7 @@ internal sealed class HotReloadClient : IAsyncDisposable
 	private static readonly TimeSpan MaxReconnectDelay = TimeSpan.FromSeconds(5);
 
 	private readonly HotReloadRuntime _runtime;
-	private readonly IServiceProvider _hostServices;
+	private IServiceProvider _hostServices;
 	private readonly Uri _serverUrl;
 	private readonly HttpClient _http;
 	private readonly CancellationTokenSource _stop = new();
@@ -50,6 +50,17 @@ internal sealed class HotReloadClient : IAsyncDisposable
 	/// Starts the connection loop in the background. It reconnects forever (until disposed); the runtime never awaits it.
 	/// </summary>
 	public void Start() => _loop = RunAsync(_stop.Token);
+
+	/// <summary>
+	/// A desktop page reload keeps this process (and this connection) alive, but the page's services and JS runtime are new.
+	/// </summary>
+	public void Reattach(IServiceProvider hostServices)
+	{
+		_hostServices = hostServices;
+
+		// The JS module was imported into the old page's JS runtime, so it has to be imported again on the next call.
+		_module = null;
+	}
 
 	/// <summary>
 	/// Asks the server for a full swap (a new generation, compiled from scratch).
@@ -224,6 +235,16 @@ internal sealed class HotReloadClient : IAsyncDisposable
 
 			case "nochanges":
 				_runtime.SetStatus(new HotReloadStatus(HotReloadStatusKind.Applied, "Hot reload: no changes to apply", []));
+				break;
+
+			// After a fresh start request, the reloaded page catches up with this generation.
+			// A desktop page reload keeps the process (and the connection), so the server won't resend the generation: apply it first.
+			case "update" when _freshStartRequested && _runtime.ManagesHostScope:
+				if (await ApplyGenerationAsync(message.Generation, message.Assemblies).ConfigureAwait(true))
+				{
+					await ReloadPageAsync().ConfigureAwait(true);
+				}
+
 				break;
 
 			// After a fresh start request, the reloaded page catches up with this generation.
@@ -417,12 +438,12 @@ internal sealed class HotReloadClient : IAsyncDisposable
 	}
 
 	/// <summary>
-	/// Imports the package's JS module once per page.
+	/// Imports the package's JS module once per page (the desktop resets it on <see cref="Reattach"/>).
 	/// </summary>
 	private async Task<IJSObjectReference> GetModuleAsync()
 	{
 		var js = _hostServices.GetRequiredService<IJSRuntime>();
-		return _module ??= await js.InvokeAsync<IJSObjectReference>("import", "./_content/Dtr.Blazor.HotReload/hotreload.js")
+		return _module ??= await js.InvokeAsync<IJSObjectReference>("import", _runtime.Options.ScriptModulePath)
 			.ConfigureAwait(true);
 	}
 
@@ -453,11 +474,14 @@ internal sealed class HotReloadClient : IAsyncDisposable
 	}
 
 	/// <summary>
-	/// A forced navigation reload. In the browser this also discards the old generations.
+	/// A forced navigation reload. In the browser this also discards the old generations; on the desktop the process stays alive,
+	/// but the page (and its service scope) starts over.
 	/// </summary>
 	private Task ReloadPageAsync()
 	{
 		Console.WriteLine("[hotreload] Reloading page");
+		_freshStartRequested = false;
+		_module = null;
 		_hostServices.GetRequiredService<NavigationManager>().Refresh(forceReload: true);
 		return Task.CompletedTask;
 	}

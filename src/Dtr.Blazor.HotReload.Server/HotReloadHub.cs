@@ -202,7 +202,7 @@ internal sealed class HotReloadHub
 			_clients.Add(client);
 		}
 
-		Log.Info($"Browser connected ({ClientCount} total)");
+		Log.Info($"Client connected ({ClientCount} total)");
 		try
 		{
 			// Client messages are small JSON objects; a WebSocket message may still be split into multiple frames, so collect
@@ -239,7 +239,7 @@ internal sealed class HotReloadHub
 
 			client.Complete();
 			await client.SendLoop.ConfigureAwait(false);
-			Log.Info($"Browser disconnected ({ClientCount} total)");
+			Log.Info($"Client disconnected ({ClientCount} total)");
 		}
 	}
 
@@ -261,7 +261,7 @@ internal sealed class HotReloadHub
 		}
 		catch (JsonException ex)
 		{
-			Log.Warning($"Invalid message from browser: {ex.Message}");
+			Log.Warning($"Invalid message from client: {ex.Message}");
 		}
 	}
 

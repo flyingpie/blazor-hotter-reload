@@ -18,7 +18,7 @@ namespace Dtr.Blazor.HotReload;
 	Justification = "Dev-only tooling, poking Blazor internals is the point"
 )]
 [SuppressMessage("Usage", "BL0006:Do not use RenderTree types", Justification = "We need the renderer to update its cascading values")]
-public sealed class HotReloadRoot : IComponent, IDisposable
+public class HotReloadRoot : IComponent, IDisposable
 {
 	private const string FreshStartTitle = "Hot reload: fresh start (recompile everything and reload the page)";
 
@@ -66,7 +66,7 @@ public sealed class HotReloadRoot : IComponent, IDisposable
 	}
 
 	/// <summary>
-	/// The page is going away, so stop listening.
+	/// The page is going away, so stop listening. On the desktop the runtime itself keeps running across page reloads.
 	/// </summary>
 	public void Dispose()
 	{
@@ -74,6 +74,7 @@ public sealed class HotReloadRoot : IComponent, IDisposable
 		Runtime.Detach(this);
 		_hideStatus?.Cancel();
 		_hideStatus?.Dispose();
+		GC.SuppressFinalize(this);
 	}
 
 	/// <summary>
@@ -294,4 +295,15 @@ public sealed class HotReloadRoot : IComponent, IDisposable
 
 		await _renderHandle.Dispatcher.InvokeAsync(() => Dismiss(status)).ConfigureAwait(true);
 	}
+}
+
+/// <summary>
+/// Desktop hosts cannot pass root component parameters (Photino's root component list only holds a type and a selector),
+/// so the root type name is baked in as a generic argument instead. Only the name is used; the type itself is looked up in every
+/// generation, so it doesn't matter that the generic argument is the type from the first generation.
+/// </summary>
+public sealed class HotReloadRoot<T> : HotReloadRoot
+	where T : IComponent
+{
+	public HotReloadRoot() => RootTypeName = typeof(T).FullName!;
 }

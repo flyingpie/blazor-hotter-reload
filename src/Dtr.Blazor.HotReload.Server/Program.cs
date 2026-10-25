@@ -11,9 +11,9 @@ public static class Program
 
 		  --project <path>        The app project (default: the only .csproj in the current directory)
 		  --port <port>           Port to listen on (default: 2009)
-		  --devserver             Also run (and restart after regular builds) the app's dev server ("dotnet run")
+		  --devserver             Also run (and restart after regular builds) the app itself ("dotnet run")
 		  --launch-profile <name> Launch profile for the dev server (default: the first one in Properties/launchSettings.json)
-		  --devserver-url <url>   Where the dev server listens (default: the launch profile's applicationUrl)
+		  --devserver-url <url>   Where the dev server listens (default: the launch profile's applicationUrl; not needed for desktop apps)
 		""";
 
 	public static async Task<int> Main(string[] args)
@@ -74,13 +74,8 @@ public static class Program
 		DevServerProcess? devServerProcess = null;
 		if (devServer)
 		{
+			// Desktop apps run a window instead of an HTTP server, so a launch profile without applicationUrl is fine.
 			devServerUrl ??= LaunchSettings.GetApplicationUrl(location.ProjectDirectory, launchProfile);
-			if (devServerUrl is null)
-			{
-				await Console.Error.WriteLineAsync("No applicationUrl found in Properties/launchSettings.json, pass it with --devserver-url.").ConfigureAwait(false);
-				return 1;
-			}
-
 			devServerProcess = new DevServerProcess(location, launchProfile, devServerUrl);
 		}
 

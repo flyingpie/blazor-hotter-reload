@@ -1,7 +1,7 @@
 namespace Dtr.Blazor.HotReload.Server;
 
 /// <summary>
-/// A project whose assembly is hot reloaded: the app itself, or one of the libraries it ships to the browser.
+/// A project whose assembly is hot reloaded: the app itself, or one of the libraries it ships.
 /// </summary>
 /// <param name="Name">The project name, e.g. "Core".</param>
 /// <param name="AssemblyName">E.g. "Dtr.Core".</param>
