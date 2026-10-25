@@ -197,6 +197,8 @@ The approach is the same as [s&box's hotload](https://github.com/Facepunch/sbox-
 - In the browser, `Dtr.Blazor.HotReload.lib.module.js` (a Blazor JavaScript initializer) starts the .NET runtime with `DOTNET_MODIFIABLE_ASSEMBLIES=debug`, so it accepts deltas.
   On the desktop, the launch profile has to set `DOTNET_MODIFIABLE_ASSEMBLIES=Debug`.
 - **Deltas** are applied with `MetadataUpdater.ApplyUpdate`; then the `[MetadataUpdateHandler]`s run (Blazor re-renders all components).
+  Just before that render, the runtime resets the section subscriptions, so a moved layout/header outlet cannot hit Blazor's
+  one-subscriber-per-section ID limit; the section content providers are kept.
   If a delta leaves stale code behind (e.g. a changed method signature with unchanged callers, which then throw a `HotReloadException`),
   the page asks for a full swap by itself.
 - **Fresh start** (the `⟳` button at the bottom left, also in the overlay and on the error page): asks the server for a full swap,
@@ -206,7 +208,8 @@ The approach is the same as [s&box's hotload](https://github.com/Facepunch/sbox-
 - **Full swaps** load the new assemblies together into a fresh `AssemblyLoadContext` (so the new app binds to the new versions of its libraries), then:
   - create a new DI container by calling `ConfigureServices` from the *new* assembly, then `InitializeServices`;
   - swap that container in, behind the service provider that Blazor uses;
-  - carry over state, then re-render the root (`HotReloadRoot` takes the place of the app's root component) with the new root component.
+  - carry over state, reset the section subscriptions, then re-render all roots in one dispatcher action (`HotReloadRoot` takes
+    the place of the app's root component) with the new root components.
 
 ## What you get
 
@@ -255,8 +258,9 @@ The URL, local storage, cookies and the login are always kept.
 - Breakpoints only bind to the assembly the process started with. Reload the page to debug the latest code (the desktop keeps the process).
 - Blazor WebAssembly (browser), Photino, and PhotinoX BlazorWebView (desktop) hosts. Not Blazor Server, MAUI, or other WebView hosts.
 - Relies on internals: Roslyn's hot reload service (only visible to dotnet-watch, driven through reflection), and a few Blazor and DI internals
-  (`RenderHandle._renderer`, `Renderer.ServiceProviderCascadingValueSuppliers`, `Renderer._componentStateById`, the container's resolved services).
-  If an SDK/Blazor update changes those, hot reload falls back (full swaps only, or no state carry-over) or reports a clear error at startup.
+  (`RenderHandle._renderer`, `Renderer.ServiceProviderCascadingValueSuppliers`, `Renderer._componentStateById`, `Dispatcher._sectionRegistry`,
+  `SectionRegistry._subscribersByIdentifier`, `SectionOutlet._subscribedIdentifier`, the container's resolved services).
+  If an SDK/Blazor update changes those, hot reload falls back (full swaps only, or no state carry-over) or reports a clear error/warning.
 
 ## Files it leaves behind
 

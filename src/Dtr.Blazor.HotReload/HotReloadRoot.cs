@@ -78,9 +78,15 @@ public class HotReloadRoot : IComponent, IDisposable
 	}
 
 	/// <summary>
-	/// Called by the runtime after a generation swap; re-render on the renderer's dispatcher (not on the caller's thread).
+	/// The dispatcher of the renderer this root is attached to. The runtime uses it to reset the section subscriptions and render
+	/// in one action.
 	/// </summary>
-	internal Task RenderGenerationAsync() => _renderHandle.Dispatcher.InvokeAsync(Render);
+	internal Dispatcher Dispatcher => _renderHandle.Dispatcher;
+
+	/// <summary>
+	/// Called by the runtime after a generation swap, on the renderer's dispatcher.
+	/// </summary>
+	internal void RenderGeneration() => Render();
 
 	/// <summary>
 	/// <see cref="RenderHandle"/> doesn't expose its renderer, but the runtime needs it to find and replace components.

@@ -132,10 +132,22 @@ public sealed class HotReloadRuntime : IAsyncDisposable
 			PendingState = state;
 			UpdateRendererCascadingValueSuppliers(next);
 
-			// Re-render all roots with the root components of the new generation (which disposes the old component tree).
-			foreach (var root in _roots.ToList())
+			// Re-render all roots with the root components of the new generation (which disposes the old component tree). Group
+			// by dispatcher, so each renderer gets one render tree in one action; resetting the section subscriptions more than
+			// once would also unsubscribe the outlets that the new tree just created.
+			foreach (var roots in _roots.ToList().GroupBy(root => root.Dispatcher))
 			{
-				await root.RenderGenerationAsync().ConfigureAwait(true);
+				var dispatcher = roots.Key;
+				await dispatcher
+					.InvokeAsync(() =>
+					{
+						SectionSubscriptions.Reset(dispatcher);
+						foreach (var root in roots)
+						{
+							root.RenderGeneration();
+						}
+					})
+					.ConfigureAwait(true);
 			}
 
 			// The new tree is rendered, so nothing refers to the previous generation's components anymore.
@@ -178,7 +190,21 @@ public sealed class HotReloadRuntime : IAsyncDisposable
 			// keep a snapshot of the current component tree. By the time the swap happens, the error boundary may have thrown
 			// parts of it away, but this snapshot still has them.
 			_componentsBeforeDelta = StateCarryOver.GetComponents(_renderer);
-			DeltaApplier.Apply(updates);
+
+			// The metadata handlers re-render on the dispatcher. Reset the section subscriptions there, immediately before that
+			// render: the diff may create the new outlet before disposing the old one, and Blazor allows only one per section ID.
+			if (_renderer is { } renderer)
+			{
+				var dispatcher = renderer.Dispatcher;
+				await dispatcher
+					.InvokeAsync(() => DeltaApplier.Apply(updates, () => SectionSubscriptions.Reset(dispatcher)))
+					.ConfigureAwait(true);
+			}
+			else
+			{
+				DeltaApplier.Apply(updates);
+			}
+
 			stopwatch.Stop();
 
 			Console.WriteLine($"[hotreload] Applied update in place ({updates.Count} assemblies) in {stopwatch.ElapsedMilliseconds} ms");

@@ -33,8 +33,10 @@ internal static class DeltaApplier
 
 	/// <summary>
 	/// Applies the updates, then lets every <c>[MetadataUpdateHandler]</c> know (e.g. Blazor, which re-renders all components).
+	/// <paramref name="beforeUpdateApplication"/> runs after the cache handlers and immediately before the application handlers
+	/// re-render, so callers can prepare the renderer for the new component tree.
 	/// </summary>
-	public static void Apply(IReadOnlyList<DeltaPayload> updates)
+	public static void Apply(IReadOnlyList<DeltaPayload> updates, Action? beforeUpdateApplication = null)
 	{
 		var assemblies = AppDomain.CurrentDomain.GetAssemblies();
 		var updatedTypes = new List<Type>();
@@ -62,14 +64,14 @@ internal static class DeltaApplier
 			}
 		}
 
-		InvokeHandlers(assemblies, [.. updatedTypes]);
+		InvokeHandlers(assemblies, [.. updatedTypes], beforeUpdateApplication);
 	}
 
 	/// <summary>
 	/// Calls the <c>[MetadataUpdateHandler]</c> callbacks. "ClearCache" runs before "UpdateApplication" (the same order
 	/// dotnet-watch uses): caches are dropped first, then the application is told to re-render with the new code.
 	/// </summary>
-	private static void InvokeHandlers(Assembly[] assemblies, Type[] updatedTypes)
+	private static void InvokeHandlers(Assembly[] assemblies, Type[] updatedTypes, Action? beforeUpdateApplication)
 	{
 		var handlers = assemblies
 			.Where(a => !a.IsDynamic)
@@ -80,6 +82,11 @@ internal static class DeltaApplier
 
 		foreach (var method in new[] { "ClearCache", "UpdateApplication" })
 		{
+			if (method == "UpdateApplication")
+			{
+				beforeUpdateApplication?.Invoke();
+			}
+
 			foreach (var handler in handlers)
 			{
 				var callback = handler.GetMethod(

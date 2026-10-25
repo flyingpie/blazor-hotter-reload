@@ -164,6 +164,12 @@ Important server-side details:
 In-place updates patch the running assemblies with `MetadataUpdater.ApplyUpdate`, then invoke the registered
 `[MetadataUpdateHandler]` callbacks (Blazor re-renders all components). Nothing is recreated, so all state is kept.
 
+Before those callbacks re-render, the runtime resets the renderer's section subscriptions on the dispatcher. Blazor allows only
+one `SectionOutlet` per section ID, and a diff can insert the new outlet before it disposes the old one (for example when a
+keyed subtree is replaced, or when an outlet moves to a different sequence). Clearing the subscriptions first lets the new tree
+subscribe; the old outlets' disposal becomes a no-op. The `SectionContent` providers are left alone, so the new outlets still
+get the same content.
+
 ```mermaid
 sequenceDiagram
     autonumber
@@ -189,6 +195,7 @@ sequenceDiagram
     H-->>C: delta message (generation, sequence, updates)
     C->>R: ApplyDeltaAsync(updates)
     R->>A: MetadataUpdater.ApplyUpdate(...)
+    R->>A: reset section subscriptions
     R->>A: [MetadataUpdateHandler] callbacks
     A-->>R: Blazor re-renders all components
     R-->>C: Status "applied in place, state kept"
@@ -202,7 +209,9 @@ container.
 ## Full swap (new generation)
 
 A full swap compiles a fresh set of assemblies, loads them into a new `AssemblyLoadContext`, builds a new DI container from
-the new app assembly, and re-renders the root. State that can be converted is carried over.
+the new app assembly, and re-renders the root. State that can be converted is carried over. The section subscriptions are reset
+in the same dispatcher action, just before all roots render, for the same reason as during an in-place update: the new keyed
+subtree can be inserted before the old one is disposed.
 
 ```mermaid
 sequenceDiagram
@@ -234,7 +243,8 @@ sequenceDiagram
     R->>New: InitializeServices()
     R->>R: Current = new generation
     R->>R: update renderer cascading values
-    R->>Root: RenderGenerationAsync()
+    R->>R: reset section subscriptions
+    R->>Root: RenderGeneration()
     Root->>New: render keyed subtree
     New-->>Root: new components receive carried-over state
     R->>Old: DisposeAsync()
