@@ -4,12 +4,13 @@ Hot reload for Blazor WebAssembly and Photino desktop apps that applies (almost)
 or reloading the page. Most changes are applied in place, keeping all state; for the rest, a new version of the app is swapped in,
 carrying over what state it can. Changes in the libraries the app uses (its project references) are hot reloaded too.
 
-Three packages:
+Four packages:
 
 | Package | What |
 | --- | --- |
 | `Dtr.Blazor.HotReload` | The browser side: a library for the Blazor WebAssembly app, plus build targets. Reference it in Debug builds only. |
-| `Dtr.Blazor.HotReload.Desktop` | The desktop side, for a Photino BlazorWebView host: the same runtime, with the host integration. Reference it in Debug builds only. |
+| `Dtr.Blazor.HotReload.Desktop` | The desktop side, for a [Photino](https://github.com/tryphotino/photino.NET) `Photino.Blazor` host: the same runtime, with the host integration. Reference it in Debug builds only. |
+| `Dtr.Blazor.HotReload.Desktop.PhotinoX` | The same, for a [PhotinoX](https://github.com/ivanvoyager/PhotinoX) `PhotinoX.Blazor` host. Reference it in Debug builds only. |
 | `Dtr.Blazor.HotReload.Server` | The hot reload server, as a .NET tool (`dtr-blazor-hotreload`). Watches and compiles the app, and talks to the client. |
 
 Requires .NET 10 (SDK and app).
@@ -20,7 +21,7 @@ Requires .NET 10 (SDK and app).
 
    ```xml
    <ItemGroup Condition="'$(Configuration)' == 'Debug'">
-     <PackageReference Include="Dtr.Blazor.HotReload" Version="0.1.6" />
+     <PackageReference Include="Dtr.Blazor.HotReload" Version="0.1.7" />
    </ItemGroup>
    ```
 
@@ -81,9 +82,10 @@ Requires .NET 10 (SDK and app).
    With `--devserver` the server also runs the app's dev server (`dotnet run`, with the URL from `Properties/launchSettings.json`),
    and restarts it after regular builds. Then open the app, edit any `.razor` / `.cs` file of the app or its libraries, and save.
 
-### Desktop (Photino Blazor)
+### Desktop (Photino Blazor / PhotinoX)
 
-A desktop host uses the same runtime through `Dtr.Blazor.HotReload.Desktop`: reference that instead of the browser package (in Debug builds only),
+A desktop host uses the same runtime through `Dtr.Blazor.HotReload.Desktop` (for `Photino.Blazor`) or
+`Dtr.Blazor.HotReload.Desktop.PhotinoX` (for `PhotinoX.Blazor`): reference one of those instead of the browser package (in Debug builds only),
 keep its own host services on the builder, and move the app's services into a static method, just like the browser app:
 
 ```csharp
@@ -115,6 +117,9 @@ public static void ConfigureServices(IServiceCollection services, IConfiguration
 }
 ```
 
+With PhotinoX, create the builder with `PhotinoBlazorApp.CreateBuilder(args)`; the call to `UseHotReload` is the same. The PhotinoX integration hooks into
+the host's per-window service scope, so no `PhotinoWebViewManager` replacement is needed.
+
 The desktop host owns the page's service scope. A page reload (including the `⟳` fresh start button) therefore rebuilds the current generation on a
 new scope without restarting the process, so in-place updates stay applied. Run the app with `DOTNET_MODIFIABLE_ASSEMBLIES=Debug` (e.g. in the
 `Photino` launch profile) to accept deltas. With `--devserver` the server starts `dotnet run` and restarts it after regular builds; a desktop launch
@@ -135,6 +140,35 @@ Client side configuration (all optional), in the app's `wwwroot/appsettings.json
 ```json
 "HotReload": { "ServerUrl": "http://127.0.0.1:2009/", "MaxGenerations": 30 }
 ```
+
+### Working on the package from an app (direct source reference)
+
+To work on the package itself, an app can reference the source checkout instead of the NuGet package, in Debug builds only. The package stays
+packable; only the reference changes. For example, for the PhotinoX package:
+
+```xml
+<PropertyGroup>
+  <DtrHotReloadSource Condition="'$(DtrHotReloadSource)' == ''">../../path/to/blazor-hotreload-review/src</DtrHotReloadSource>
+</PropertyGroup>
+<ItemGroup Condition="'$(Configuration)' == 'Debug'">
+  <ProjectReference Include="$(DtrHotReloadSource)/Dtr.Blazor.HotReload.Desktop.PhotinoX/Dtr.Blazor.HotReload.Desktop.PhotinoX.csproj" />
+</ItemGroup>
+<!-- Project references don't import the package's build targets; import them manually. -->
+<Import
+  Project="$(DtrHotReloadSource)/Dtr.Blazor.HotReload/build/Dtr.Blazor.HotReload.targets"
+  Condition="'$(Configuration)' == 'Debug'"
+/>
+```
+
+Run the server from source too:
+
+```sh
+dotnet run --project "$DTR_HOTRELOAD_SOURCE/Dtr.Blazor.HotReload.Server/Dtr.Blazor.HotReload.Server.csproj" -c Debug -- \
+  --project /absolute/path/to/App.csproj --devserver --launch-profile Run
+```
+
+`--project` has to be an absolute path when the server is started with `dotnet run --project`: the server's working directory is its own project
+directory, not the app's.
 
 ## How it works
 
@@ -158,7 +192,7 @@ The approach is the same as [s&box's hotload](https://github.com/Facepunch/sbox-
 - Changes in files that contain `IServiceCollection` always become a full swap: patching them in place wouldn't rebuild the DI container.
 - Everything goes to the client through a WebSocket; a reloaded page catches up (latest generation, plus the deltas on top of it).
 
-### Client runtime (`Dtr.Blazor.HotReload` / `.Desktop`)
+### Client runtime (`Dtr.Blazor.HotReload` / `.Desktop` / `.Desktop.PhotinoX`)
 
 - In the browser, `Dtr.Blazor.HotReload.lib.module.js` (a Blazor JavaScript initializer) starts the .NET runtime with `DOTNET_MODIFIABLE_ASSEMBLIES=debug`, so it accepts deltas.
   On the desktop, the launch profile has to set `DOTNET_MODIFIABLE_ASSEMBLIES=Debug`.
@@ -214,7 +248,7 @@ The URL, local storage, cookies and the login are always kept.
 - Code in `Main` outside `ConfigureServices` / `InitializeServices` (culture, environment variables, logging providers) only runs on a page reload (browser), or on a process restart (desktop).
 - An in-place update doesn't re-run constructors or field initializers of existing objects (same as `dotnet watch`). Save the file with another change, or reload the page, to start them over.
 - Breakpoints only bind to the assembly the process started with. Reload the page to debug the latest code (the desktop keeps the process).
-- Blazor WebAssembly (browser) and Photino BlazorWebView (desktop) hosts. Not Blazor Server, MAUI, or other WebView hosts.
+- Blazor WebAssembly (browser), Photino, and PhotinoX BlazorWebView (desktop) hosts. Not Blazor Server, MAUI, or other WebView hosts.
 - Relies on internals: Roslyn's hot reload service (only visible to dotnet-watch, driven through reflection), and a few Blazor and DI internals
   (`RenderHandle._renderer`, `Renderer.ServiceProviderCascadingValueSuppliers`, `Renderer._componentStateById`, the container's resolved services).
   If an SDK/Blazor update changes those, hot reload falls back (full swaps only, or no state carry-over) or reports a clear error at startup.

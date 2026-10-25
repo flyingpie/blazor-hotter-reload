@@ -7,6 +7,7 @@
 	<Folder Name="/src/">
 		<Project Path="src/Dtr.Blazor.HotReload/Dtr.Blazor.HotReload.csproj" />
 		<Project Path="src/Dtr.Blazor.HotReload.Desktop/Dtr.Blazor.HotReload.Desktop.csproj" />
+		<Project Path="src/Dtr.Blazor.HotReload.Desktop.PhotinoX/Dtr.Blazor.HotReload.Desktop.PhotinoX.csproj" />
 		<Project Path="src/Dtr.Blazor.HotReload.Server/Dtr.Blazor.HotReload.Server.csproj" />
 	</Folder>
 	<Folder Name="/test/">

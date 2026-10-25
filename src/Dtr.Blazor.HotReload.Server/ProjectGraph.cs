@@ -21,6 +21,7 @@ internal static class ProjectGraph
 	{
 		"Dtr.Blazor.HotReload.csproj",
 		"Dtr.Blazor.HotReload.Desktop.csproj",
+		"Dtr.Blazor.HotReload.Desktop.PhotinoX.csproj",
 	};
 
 	/// <summary>
