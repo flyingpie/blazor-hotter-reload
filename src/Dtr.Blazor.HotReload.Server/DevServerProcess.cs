@@ -91,7 +91,10 @@ internal sealed class DevServerProcess(ProjectLocation location, string? launchP
 
 	public void Dispose() => Stop();
 
-	private void Stop()
+	/// <summary>
+	/// Stops the app (and its child processes), e.g. before a build that has to replace its output files.
+	/// </summary>
+	public void Stop()
 	{
 		if (_process is null)
 		{
