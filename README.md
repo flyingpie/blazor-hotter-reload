@@ -12,20 +12,35 @@ Two packages:
 
 Requires .NET 10 (SDK and app).
 
-## How it works
+## Server
 
-The approach is the same as [s&box's hotload](https://github.com/Facepunch/sbox-public): a complete new version of the app is compiled and
-loaded next to the old one, as a new **app generation**.
+Install the server as a (local) tool, and run it next to the app's dev server:
 
-### Browser (`Dtr.Blazor.HotReload`)
+```sh
+dotnet new tool-manifest   # if there isn't one yet
+dotnet tool install Dtr.Blazor.HotReload.Server
+dotnet build path/to/App.csproj -c Debug
+dotnet tool run dtr-blazor-hotreload --project path/to/App.csproj
+```
 
-- A new generation's assemblies are loaded together into a fresh `AssemblyLoadContext`. Their dependencies (the framework, third-party
-  libraries) come from the default context, so those types are shared.
-- A new DI container is built by calling `ConfigureServices` from the *new* assembly, and swapped in behind the service provider that Blazor uses.
-  Services registered on the builder before `UseHotReload()` (framework services such as `NavigationManager`, `IJSRuntime` and logging)
-  are shared by all generations.
-- The root is re-rendered (`HotReloadRoot` takes the place of the app's root component) with the new root component, which replaces the
-  whole component tree. An error boundary around it shows unhandled exceptions, and an overlay shows the hot reload status.
+Server options:
+
+| Option | Default |
+| --- | --- |
+| `--project <path>` | The only `.csproj` in the current directory |
+| `--port <port>` | `2009` |
+
+### How it works
+
+- Keeps a Roslyn workspace with the app. It reuses the exact compiler command line of the last regular build (captured by the package's build targets):
+  the same references, the same source generators (including Razor), the same editorconfigs, and so on.
+- Roslyn and the workspace layer are loaded from the installed SDK (its Roslyn and dotnet-watch), so they always match the SDK's Razor generator.
+- On every save it recompiles the app (incrementally: only changed documents are re-parsed), emits it to memory, and tells the browser through a WebSocket.
+  A reloaded page catches up with the latest generation.
+
+### Files it leaves behind
+
+- `dtr-hotreload.rsp` / `dtr-hotreload.txt` in the app's intermediate (obj) directory: its compiler command line.
 
 ## Building the packages
 
