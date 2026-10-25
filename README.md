@@ -12,6 +12,21 @@ Two packages:
 
 Requires .NET 10 (SDK and app).
 
+## How it works
+
+The approach is the same as [s&box's hotload](https://github.com/Facepunch/sbox-public): a complete new version of the app is compiled and
+loaded next to the old one, as a new **app generation**.
+
+### Browser (`Dtr.Blazor.HotReload`)
+
+- A new generation's assemblies are loaded together into a fresh `AssemblyLoadContext`. Their dependencies (the framework, third-party
+  libraries) come from the default context, so those types are shared.
+- A new DI container is built by calling `ConfigureServices` from the *new* assembly, and swapped in behind the service provider that Blazor uses.
+  Services registered on the builder before `UseHotReload()` (framework services such as `NavigationManager`, `IJSRuntime` and logging)
+  are shared by all generations.
+- The root is re-rendered (`HotReloadRoot` takes the place of the app's root component) with the new root component, which replaces the
+  whole component tree. An error boundary around it shows unhandled exceptions, and an overlay shows the hot reload status.
+
 ## Building the packages
 
 ```sh
