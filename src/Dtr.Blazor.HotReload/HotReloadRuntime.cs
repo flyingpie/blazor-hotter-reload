@@ -275,6 +275,11 @@ public sealed class HotReloadRuntime : IAsyncDisposable
 	}
 
 	/// <summary>
+	/// The "fresh start" button: a full compile of the latest code, then a page reload (see <see cref="HotReloadClient.RequestFreshStartAsync"/>).
+	/// </summary>
+	internal Task RequestFreshStartAsync() => _client?.RequestFreshStartAsync() ?? Task.CompletedTask;
+
+	/// <summary>
 	/// Called for exceptions that end up in the app's error boundary.
 	/// In-place updates can leave code behind that is out of date: e.g. when a method's signature changes, unchanged callers still call
 	/// the old version, which now throws a HotReloadException. A full swap (compiled from scratch) fixes that.
