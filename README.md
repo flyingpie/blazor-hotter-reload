@@ -12,16 +12,64 @@ Two packages:
 
 Requires .NET 10 (SDK and app).
 
-## Server
+## Setup
 
-Install the server as a (local) tool, and run it next to the app's dev server:
+1. Reference the library from the Blazor WebAssembly app, in Debug builds only:
 
-```sh
-dotnet new tool-manifest   # if there isn't one yet
-dotnet tool install Dtr.Blazor.HotReload.Server
-dotnet build path/to/App.csproj -c Debug
-dotnet tool run dtr-blazor-hotreload --project path/to/App.csproj
-```
+   ```xml
+   <ItemGroup Condition="'$(Configuration)' == 'Debug'">
+     <PackageReference Include="Dtr.Blazor.HotReload" Version="0.1.1" />
+   </ItemGroup>
+   ```
+
+   Its build targets define `HOTRELOAD` (Debug builds only; opt out with `-p:DtrHotReload=false`), and capture the app's compiler command line for the server.
+
+2. Split the service registrations out of `Program.Main` into a static method, and let hot reload call it:
+
+   ```csharp
+   #if HOTRELOAD
+   using Dtr.Blazor.HotReload;
+   #endif
+
+   public static class Program
+   {
+       public static async Task Main(string[] args)
+       {
+           var builder = WebAssemblyHostBuilder.CreateDefault(args);
+           builder.RootComponents.Add<App>("#app");
+           builder.RootComponents.Add<HeadOutlet>("head::after");
+
+   #if HOTRELOAD
+           builder.UseHotReload(ConfigureServices);
+   #else
+           ConfigureServices(builder.Services, builder.Configuration, builder.HostEnvironment);
+   #endif
+
+           await builder.Build().RunAsync();
+       }
+
+       // Called again for every new version of the app (so it must be static, and keep its name and signature).
+       public static void ConfigureServices(IServiceCollection services, IConfiguration config, IWebAssemblyHostEnvironment env)
+       {
+           services.AddScoped(_ => new HttpClient { BaseAddress = new Uri(env.BaseAddress) });
+           // ...
+       }
+   }
+   ```
+
+   `UseHotReload` must come after the root components are added. Services registered on the builder *before* it (framework defaults, logging providers)
+   are shared by all versions of the app; everything in `ConfigureServices` is created fresh for every new version.
+
+3. Install the server as a (local) tool, and run it next to the app's dev server:
+
+   ```sh
+   dotnet new tool-manifest   # if there isn't one yet
+   dotnet tool install Dtr.Blazor.HotReload.Server
+   dotnet build path/to/App.csproj -c Debug
+   dotnet tool run dtr-blazor-hotreload --project path/to/App.csproj
+   ```
+
+   Then open the app, edit any `.razor` / `.cs` file of the app, and save.
 
 Server options:
 
@@ -30,7 +78,18 @@ Server options:
 | `--project <path>` | The only `.csproj` in the current directory |
 | `--port <port>` | `2009` |
 
-### How it works
+Browser side configuration (all optional), in the app's `wwwroot/appsettings.json`:
+
+```json
+"HotReload": { "ServerUrl": "http://127.0.0.1:2009/", "MaxGenerations": 30 }
+```
+
+## How it works
+
+The approach is the same as [s&box's hotload](https://github.com/Facepunch/sbox-public): a complete new version of the app is compiled and
+loaded next to the old one, as a new **app generation**.
+
+### Server (`dtr-blazor-hotreload`, on the dev machine)
 
 - Keeps a Roslyn workspace with the app. It reuses the exact compiler command line of the last regular build (captured by the package's build targets):
   the same references, the same source generators (including Razor), the same editorconfigs, and so on.
@@ -38,7 +97,40 @@ Server options:
 - On every save it recompiles the app (incrementally: only changed documents are re-parsed), emits it to memory, and tells the browser through a WebSocket.
   A reloaded page catches up with the latest generation.
 
-### Files it leaves behind
+### Browser (`Dtr.Blazor.HotReload`)
+
+- A new generation's assemblies are loaded together into a fresh `AssemblyLoadContext`. Their dependencies (the framework, third-party
+  libraries) come from the default context, so those types are shared.
+- A new DI container is built by calling `ConfigureServices` from the *new* assembly, and swapped in behind the service provider that Blazor uses.
+  Services registered on the builder before `UseHotReload()` (framework services such as `NavigationManager`, `IJSRuntime` and logging)
+  are shared by all generations.
+- The root is re-rendered (`HotReloadRoot` takes the place of the app's root component) with the new root component, which replaces the
+  whole component tree. An error boundary around it shows unhandled exceptions, and an overlay shows the hot reload status.
+
+## What you get
+
+| Change | Result |
+| --- | --- |
+| `.razor` / `.cs` changes in the app: markup, code, new/removed files, members, signatures, DI registrations, ... | New version of the app (~1-2 s) |
+| `wwwroot/**/*.css` | Hot (stylesheet is re-fetched) |
+| Other `wwwroot` files (`index.html`, `app.js`, ...) | Page reload |
+| Compile error | Overlay with the errors; the app keeps running the previous version |
+| Unhandled exception while rendering | Shown in place of the app; fix it and save |
+| Packages, csproj, or anything generated at build time only | Needs a regular build. The server notices; restart the dev server and reload the page |
+
+**State is not kept**: every new version starts the app over, in-memory component and service state (including static fields) is reset.
+The URL, local storage, cookies and the login are kept.
+
+## Limitations
+
+- Old assemblies can't be unloaded in the browser. After 30 new versions (`HotReload:MaxGenerations`), the page is reloaded once to free memory.
+- Code in `Main` outside `ConfigureServices` (culture, environment variables, logging providers) only runs on a page reload.
+- Breakpoints only bind to the assembly the page started with. Reload the page to debug the latest code.
+- Blazor WebAssembly only (not Blazor Server, nor hybrid/desktop hosts).
+- Relies on a few Blazor internals (`RenderHandle._renderer`, `Renderer.ServiceProviderCascadingValueSuppliers`).
+  If a Blazor update changes those, hot reload reports a clear error at startup.
+
+## Files it leaves behind
 
 - `dtr-hotreload.rsp` / `dtr-hotreload.txt` in the app's intermediate (obj) directory: its compiler command line.
 

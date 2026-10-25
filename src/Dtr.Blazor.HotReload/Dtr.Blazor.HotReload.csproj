@@ -20,4 +20,8 @@
 	<ItemGroup>
 		<PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly" />
 	</ItemGroup>
+	<ItemGroup>
+		<!-- Imported into the build of the (directly) referencing app -->
+		<None Include="build/Dtr.Blazor.HotReload.targets" Pack="true" PackagePath="build/" />
+	</ItemGroup>
 </Project>
