@@ -14,7 +14,7 @@
 	<!-- Packaging -->
 	<PropertyGroup>
 		<!-- Bump this for every release: consumers cache packages by version. -->
-		<VersionPrefix>0.1.7</VersionPrefix>
+		<VersionPrefix>0.1.8</VersionPrefix>
 		<Authors>DataRotonde</Authors>
 		<Copyright>DataRotonde</Copyright>
 		<PackageTags>blazor;webassembly;desktop;photino;hotreload;hot-reload</PackageTags>
