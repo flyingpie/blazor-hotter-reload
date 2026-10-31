@@ -2,7 +2,7 @@ using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
 using System.Reflection.Metadata;
 
-namespace BlazorHMR;
+namespace BlazorHMR.Deltas;
 
 /// <summary>
 /// Applies in-place updates (Edit-and-Continue deltas) to the running assemblies, and tells the frameworks about it.

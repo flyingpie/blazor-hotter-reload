@@ -1,7 +1,7 @@
 using System.Diagnostics;
-using System.Net.Http;
+using BlazorHMR.Server.Project;
 
-namespace BlazorHMR.Server;
+namespace BlazorHMR.Server.Server;
 
 /// <summary>
 /// Runs the app itself ("dotnet run") as a child process, and restarts it after every regular build.
@@ -10,14 +10,13 @@ namespace BlazorHMR.Server;
 /// after every build. For a desktop app there is no URL to wait for: the process itself is the app.
 /// </para>
 /// </summary>
-internal sealed class DevServerProcess(ProjectLocation location, string? launchProfile, Uri? url) : IDisposable
+internal sealed class DevServerProcess(ProjectLocation location, string? launchProfile) : IDisposable
 {
-	private static readonly TimeSpan StartTimeout = TimeSpan.FromSeconds(60);
 	private static readonly TimeSpan DesktopStartGracePeriod = TimeSpan.FromSeconds(1);
 
 	private Process? _process;
 
-	public Uri? Url { get; } = url;
+	// public Uri? Url { get; } = url;
 
 	/// <summary>
 	/// Starts "dotnet run --no-build" for the app. The hot reload server already compiles, so there is no need to build again.
@@ -33,51 +32,17 @@ internal sealed class DevServerProcess(ProjectLocation location, string? launchP
 			startInfo.ArgumentList.Add(arg);
 		}
 
-		Log.Info(Url is null ? "Starting the app..." : $"Starting dev server ({Url})...");
+		Log.Info("Starting the app...");
 		_process = Process.Start(startInfo) ?? throw new InvalidOperationException("Could not start the dev server.");
 
 		// No URL (desktop): give it a moment to fail on startup, then assume it is fine. There is nothing to poll.
-		if (Url is null)
+		await Task.Delay(DesktopStartGracePeriod, token).ConfigureAwait(false);
+		if (_process.HasExited)
 		{
-			await Task.Delay(DesktopStartGracePeriod, token).ConfigureAwait(false);
-			if (_process.HasExited)
-			{
-				throw new InvalidOperationException($"The app exited with code {_process.ExitCode}.");
-			}
-
-			Log.Success("App started");
-			return;
+			throw new InvalidOperationException($"The app exited with code {_process.ExitCode}.");
 		}
 
-		// Web app: poll until it answers. A browser refresh before the server is ready would show a connection error.
-		using var http = new HttpClient();
-		var stopwatch = Stopwatch.StartNew();
-		while (stopwatch.Elapsed < StartTimeout)
-		{
-			token.ThrowIfCancellationRequested();
-			if (_process.HasExited)
-			{
-				throw new InvalidOperationException($"The dev server exited with code {_process.ExitCode}.");
-			}
-
-			try
-			{
-				using var response = await http.GetAsync(Url, token).ConfigureAwait(false);
-				if (response.IsSuccessStatusCode)
-				{
-					Log.Success($"Dev server is up: {Url}");
-					return;
-				}
-			}
-			catch (HttpRequestException)
-			{
-				// Not yet
-			}
-
-			await Task.Delay(250, token).ConfigureAwait(false);
-		}
-
-		throw new TimeoutException($"The dev server did not come up at {Url}.");
+		Log.Success("App started");
 	}
 
 	/// <summary>

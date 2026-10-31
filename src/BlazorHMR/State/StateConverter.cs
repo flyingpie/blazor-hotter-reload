@@ -1,5 +1,3 @@
-using System.Collections;
-using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
 using System.Runtime.CompilerServices;
 using Microsoft.AspNetCore.Components;
@@ -15,11 +13,6 @@ namespace BlazorHMR.State;
 /// Objects of types that are not hot reloaded (strings, framework types, unchanged libraries) are shared as-is.
 /// </para>
 /// </summary>
-[SuppressMessage(
-	"Major Code Smell",
-	"S3011:Reflection should not be used to increase accessibility",
-	Justification = "Copying private state is the point"
-)]
 public sealed class StateConverter
 {
 	private const BindingFlags InstanceFields =
@@ -160,7 +153,10 @@ public sealed class StateConverter
 		{
 			// Base types that were not swapped (e.g. ComponentBase) are normally set up by the new object's constructor.
 			// When the target wasn't constructed (ConvertObject), those fields have to be copied too.
-			var newLevel = IsOld(level) ? MapType(level) : includeUnswappedBaseTypes ? level : null;
+			var newLevel =
+				IsOld(level) ? MapType(level)
+				: includeUnswappedBaseTypes ? level
+				: null;
 			if (newLevel is null)
 			{
 				continue;

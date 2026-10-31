@@ -1,4 +1,4 @@
-namespace BlazorHMR;
+namespace BlazorHMR.Deltas;
 
 /// <summary>
 /// An in-place update (Edit-and-Continue delta) for one loaded assembly, as computed by the hot reload server.

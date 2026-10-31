@@ -1,10 +1,11 @@
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
-using BlazorHMR.Server.Compiling;
 using BlazorHMR.Server.Deltas;
+using BlazorHMR.Server.Project;
+using BlazorHMR.Server.Server;
 
-namespace BlazorHMR.Server;
+namespace BlazorHMR.Server.Compilation;
 
 /// <summary>
 /// Watches the app project and the libraries it ships, and turns file changes into updates for the running client:
@@ -357,7 +358,9 @@ internal sealed class CompileWorker : IDisposable
 					// Either the code doesn't compile, or the delta can't be emitted for this runtime (e.g. CS9346: an update that needs
 					// an explicit interface implementation, which the WebAssembly runtime can't add). The full compile tells which:
 					// it reports the errors in the first case, and swaps the app in the second.
-					var errors = result.Diagnostics.Where(DeltaSession.IsCompileError).Select(d => $"{d.Id}: {d.GetMessage(System.Globalization.CultureInfo.InvariantCulture)}");
+					var errors = result
+						.Diagnostics.Where(DeltaSession.IsCompileError)
+						.Select(d => $"{d.Id}: {d.GetMessage(System.Globalization.CultureInfo.InvariantCulture)}");
 					Log.Info($"Can't be applied in place, compiling the whole app: {string.Join("; ", errors.Distinct().Take(3))}");
 					break;
 
@@ -541,7 +544,7 @@ internal sealed class CompileWorker : IDisposable
 			AddOutput(Path.GetDirectoryName(project.Project.ResponseFile)!, project.Project.AssemblyName + ".dll");
 		}
 
-		AddOutput(Path.GetDirectoryName(_location.IntermediateAssembly)!, "dotnet.js");
+		// AddOutput(Path.GetDirectoryName(_location.IntermediateAssembly)!, "dotnet.js");
 
 		foreach (var (directory, files) in outputs)
 		{

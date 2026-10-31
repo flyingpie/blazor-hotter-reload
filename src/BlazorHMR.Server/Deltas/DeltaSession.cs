@@ -1,5 +1,4 @@
 using System.Collections.Immutable;
-using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.Host;
@@ -13,11 +12,6 @@ namespace BlazorHMR.Server.Deltas;
 /// so it's driven through reflection. If its shape ever changes, <see cref="TryCreate"/> returns null, and every change becomes a full swap.
 /// </para>
 /// </summary>
-[SuppressMessage(
-	"Major Code Smell",
-	"S3011:Reflection should not be used to increase accessibility",
-	Justification = "Roslyn's hot reload service is internal, see class docs"
-)]
 internal sealed class DeltaSession
 {
 	private const string ServiceTypeName =

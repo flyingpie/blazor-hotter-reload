@@ -1,5 +1,5 @@
-using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
+using BlazorHMR.Blazor;
 using Microsoft.AspNetCore.Components;
 using Microsoft.AspNetCore.Components.Rendering;
 using Microsoft.AspNetCore.Components.RenderTree;
@@ -17,12 +17,6 @@ namespace BlazorHMR.State;
 /// </list>
 /// Best effort, see <see cref="StateConverter"/>.
 /// </summary>
-[SuppressMessage(
-	"Major Code Smell",
-	"S3011:Reflection should not be used to increase accessibility",
-	Justification = "Reads Blazor's and the DI container's internals, see class docs"
-)]
-[SuppressMessage("Usage", "BL0006:Do not use RenderTree types", Justification = "Needs the renderer's components")]
 public sealed class StateCarryOver
 {
 	private const BindingFlags AnyInstance = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;

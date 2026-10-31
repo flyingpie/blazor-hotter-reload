@@ -1,4 +1,4 @@
-namespace BlazorHMR.Server;
+namespace BlazorHMR.Server.Project;
 
 /// <summary>
 /// Where the files are that the build of the app project (with the build targets of the BlazorHMR package) left for us.
@@ -32,7 +32,9 @@ public sealed record ProjectLocation(
 
 			if (!File.Exists(infoFile))
 			{
-				Log.Error($"'{infoFile}' still not found; does the project reference the BlazorHMR (or .Desktop) package, and is it built in Debug?");
+				Log.Error(
+					$"'{infoFile}' still not found; does the project reference the BlazorHMR (or .Desktop) package, and is it built in Debug?"
+				);
 				return null;
 			}
 		}

@@ -1,8 +1,9 @@
 using System.Diagnostics;
-using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
 using System.Runtime.ExceptionServices;
 using System.Runtime.Loader;
+using BlazorHMR.Blazor;
+using BlazorHMR.Deltas;
 using BlazorHMR.State;
 using Microsoft.AspNetCore.Components;
 using Microsoft.AspNetCore.Components.RenderTree;
@@ -18,12 +19,6 @@ namespace BlazorHMR;
 /// That loses in-memory state, but it means that pretty much <i>any</i> change can be applied.
 /// </para>
 /// </summary>
-[SuppressMessage(
-	"Major Code Smell",
-	"S3011:Reflection should not be used to increase accessibility",
-	Justification = "Dev-only tooling, poking Blazor internals is the point"
-)]
-[SuppressMessage("Usage", "BL0006:Do not use RenderTree types", Justification = "We need the renderer to update its cascading values")]
 public sealed class HotReloadRuntime : IAsyncDisposable
 {
 	private const string CascadingValueSupplierTypeName = "Microsoft.AspNetCore.Components.ICascadingValueSupplier";
@@ -46,12 +41,11 @@ public sealed class HotReloadRuntime : IAsyncDisposable
 	private int _restartRequestedFor = -1;
 	private List<IComponent>? _componentsBeforeDelta;
 
-	public HotReloadRuntime(AppEntryPoint entryPoint, Assembly initialAssembly, HotReloadOptions options)
+	public HotReloadRuntime(AppEntryPoint entryPoint, Assembly initialAssembly)
 	{
 		_entryPoint = entryPoint;
 		_initialAssembly = initialAssembly;
 		_rootProvider = new SwappableServiceProvider(this, isRoot: true);
-		Options = options;
 	}
 
 	public IServiceProvider RootProvider => _rootProvider;
@@ -66,8 +60,6 @@ public sealed class HotReloadRuntime : IAsyncDisposable
 		(_hostScope ?? throw new InvalidOperationException("Hot reload has not been initialized yet.")).ServiceProvider;
 
 	public event Action? StatusChanged;
-
-	public HotReloadOptions Options { get; }
 
 	public AppGeneration Current => _current ?? throw new InvalidOperationException("Hot reload has not been initialized yet.");
 
@@ -125,7 +117,7 @@ public sealed class HotReloadRuntime : IAsyncDisposable
 				Console.WriteLine($"[hotreload] Could not carry over services/statics: {ex}");
 			}
 
-			InvokeInitializeServices(next);
+			// InvokeInitializeServices(next);
 
 			// From here on, service resolutions and renders use the new generation.
 			_current = next;
@@ -353,8 +345,8 @@ public sealed class HotReloadRuntime : IAsyncDisposable
 			_ = DisposeGenerationAsync(previous, previousScope);
 		}
 
-		// The desktop host starts generation 0 itself (the app cannot: it only sees the host's services), so initialize it here.
-		InvokeInitializeServices(_current);
+		// // The desktop host starts generation 0 itself (the app cannot: it only sees the host's services), so initialize it here.
+		// InvokeInitializeServices(_current);
 
 		_client?.Reattach(scope.ServiceProvider);
 
@@ -579,44 +571,48 @@ public sealed class HotReloadRuntime : IAsyncDisposable
 	private void InvokeConfigureServices(Assembly assembly, IServiceCollection services)
 	{
 		var type =
-			assembly.GetType(_entryPoint.TypeName, throwOnError: false)
-			?? throw new InvalidOperationException($"Type '{_entryPoint.TypeName}' was not found in the app assembly.");
+			assembly.GetType(_entryPoint.StartupTypeName, throwOnError: false)
+			?? throw new InvalidOperationException($"Type '{_entryPoint.StartupTypeName}' was not found in the app assembly.");
 
-		var parameterTypes = new[] { typeof(IServiceCollection) }.Concat(_entryPoint.ParameterTypes).ToArray();
+		var parameterTypes = new[] { typeof(IServiceCollection) };
 		var method =
-			type.GetMethod(_entryPoint.MethodName, BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic, parameterTypes)
+			type.GetMethod(
+				_entryPoint.RegisterServicesMethodName,
+				BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic,
+				parameterTypes
+			)
 			?? throw new InvalidOperationException(
-				$"Method '{_entryPoint.TypeName}.{_entryPoint.MethodName}' (with the original signature) was not found in the app assembly."
+				$"Method '{_entryPoint.StartupTypeName}.{_entryPoint.RegisterServicesMethodName}' (with the original signature) was not found in the app assembly."
 			);
 
-		Invoke(method, [services, .. _entryPoint.Arguments]);
+		Invoke(method, [services]);
 	}
 
-	/// <summary>
-	/// Static state in a new generation's assemblies starts out fresh (e.g. <c>MyApp.Utils.Log</c>), give the app a chance to set it up.
-	/// Generation 0 is initialized by the app itself (browser), or by <see cref="CreateHostScope"/> when the page attaches (desktop).
-	/// </summary>
-	private void InvokeInitializeServices(AppGeneration generation)
-	{
-		if (_entryPoint.InitializeMethodName is null)
-		{
-			return;
-		}
-
-		var method =
-			generation
-				.Assembly.GetType(_entryPoint.TypeName, throwOnError: false)
-				?.GetMethod(
-					_entryPoint.InitializeMethodName,
-					BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic,
-					[typeof(IServiceProvider)]
-				)
-			?? throw new InvalidOperationException(
-				$"Method '{_entryPoint.TypeName}.{_entryPoint.InitializeMethodName}' (with the original signature) was not found in the app assembly."
-			);
-
-		Invoke(method, [generation.Services]);
-	}
+	// /// <summary>
+	// /// Static state in a new generation's assemblies starts out fresh (e.g. <c>MyApp.Utils.Log</c>), give the app a chance to set it up.
+	// /// Generation 0 is initialized by the app itself (browser), or by <see cref="CreateHostScope"/> when the page attaches (desktop).
+	// /// </summary>
+	// private void InvokeInitializeServices(AppGeneration generation)
+	// {
+	// 	if (_entryPoint.InitializeMethodName is null)
+	// 	{
+	// 		return;
+	// 	}
+	//
+	// 	var method =
+	// 		generation
+	// 			.Assembly.GetType(_entryPoint.StartupTypeName, throwOnError: false)
+	// 			?.GetMethod(
+	// 				_entryPoint.InitializeMethodName,
+	// 				BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic,
+	// 				[typeof(IServiceProvider)]
+	// 			)
+	// 		?? throw new InvalidOperationException(
+	// 			$"Method '{_entryPoint.StartupTypeName}.{_entryPoint.InitializeMethodName}' (with the original signature) was not found in the app assembly."
+	// 		);
+	//
+	// 	Invoke(method, [generation.Services]);
+	// }
 
 	/// <summary>
 	/// The renderer caches the cascading values that were registered as services (<c>AddCascadingValue</c>) when it is created.

@@ -1,6 +1,6 @@
 using System.Runtime.Loader;
 
-namespace BlazorHMR.Server;
+namespace BlazorHMR.Server.Compilation;
 
 /// <summary>
 /// Loads Roslyn from the SDK (we only compile against the NuGet packages).

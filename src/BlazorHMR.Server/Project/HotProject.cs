@@ -1,4 +1,4 @@
-namespace BlazorHMR.Server;
+namespace BlazorHMR.Server.Project;
 
 /// <summary>
 /// A project whose assembly is hot reloaded: the app itself, or one of the libraries it ships.

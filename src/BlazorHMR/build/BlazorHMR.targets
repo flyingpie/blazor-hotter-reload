@@ -1,28 +1,27 @@
 <Project>
 	<!--
-		Part of the BlazorHMR package, imported into the build of the app that references it.
-		Only does something in Debug builds (opt out with -p:BlazorHMR=false):
-
-		- Defines HOTRELOAD, so Program.cs can call UseHotReload().
-		- Captures the exact compiler command line of the app, so the hot reload server (BlazorHMR.Server) can recompile it
-		  on-the-fly with the same references, source generators (incl. Razor), defines, editorconfigs, etc.
+		Tell the compiler task to put command line args in the "CscCommandLineArgs" property, so we can capture them.
+		We can then use these to re-run the compiler with the exact same command and args.
+		Can be disabled by setting the "BlazorHMR"-property to "false".
 	-->
-	<PropertyGroup Condition="'$(BlazorHMR)' != 'false'">
-		<!-- Makes the Csc task output its command line as @(CscCommandLineArgs) -->
+	<PropertyGroup Condition="'$(BlazorHMR).ToUpper()' != 'FALSE'">
 		<ProvideCommandLineArgs>true</ProvideCommandLineArgs>
 	</PropertyGroup>
 
-	<Target
-		Name="BlazorHMRWriteCompilerArgs"
-		AfterTargets="CoreCompile"
-		Condition="'$(BlazorHMR)' != 'false' and @(CscCommandLineArgs) != ''"
-	>
+	<!--
+		Write compiler commands and -paths to temp files, so we can re-run the compiler on source file changes.
+		Note that the "CscCommandLineArgs"-property may be empty, if HMR is disabled, or when compilation is skipped due to no relevant changes.
+		In those cases, we don't write anything, as to not overwrite the target files with an empty string.
+	-->
+	<Target Name="BlazorHMRWriteCompilerArgs" AfterTargets="CoreCompile" Condition="@(CscCommandLineArgs) != ''">
+		<!-- Compiler (csc) command line args, determine most of the compiler configuration. -->
 		<WriteLinesToFile
 			File="$(IntermediateOutputPath)blazor-hmr.rsp"
 			Lines="@(CscCommandLineArgs)"
 			Overwrite="true"
 			WriteOnlyWhenDifferent="true"
 		/>
+		<!-- Paths to various files and directories involved in compilation. -->
 		<WriteLinesToFile
 			File="$(IntermediateOutputPath)blazor-hmr.txt"
 			Lines="ProjectDir=$(MSBuildProjectDirectory);RoslynPath=$(RoslynTargetsPath);IntermediateAssembly=$([MSBuild]::NormalizePath('$(MSBuildProjectDirectory)', '$(IntermediateOutputPath)$(TargetFileName)'))"

@@ -1,7 +1,8 @@
-using System.Diagnostics.CodeAnalysis;
 using System.Net.Http;
 using System.Net.WebSockets;
 using System.Text.Json;
+using BlazorHMR.Compilation;
+using BlazorHMR.Deltas;
 using Microsoft.AspNetCore.Components;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.JSInterop;
@@ -12,7 +13,6 @@ namespace BlazorHMR;
 /// Talks to the hot reload server over a WebSocket, and applies what it sends:
 /// in-place updates (deltas, which keep all state), or complete new generations of the app.
 /// </summary>
-[SuppressMessage("Design", "CA1031:Do not catch general exception types", Justification = "Hot reload must never take down the app")]
 public sealed class HotReloadClient : IAsyncDisposable
 {
 	private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
@@ -37,7 +37,7 @@ public sealed class HotReloadClient : IAsyncDisposable
 	{
 		_runtime = runtime;
 		_hostServices = hostServices;
-		_serverUrl = runtime.Options.ServerUrl;
+		_serverUrl = HotReloadOptions.ServerUrl;
 		_http = new HttpClient { BaseAddress = _serverUrl };
 	}
 
@@ -411,7 +411,7 @@ public sealed class HotReloadClient : IAsyncDisposable
 		}
 
 		// Old assemblies can't be unloaded, so every now and then, start over (the reloaded page will pick up the latest generation).
-		if (_runtime.Current.Number >= _runtime.Options.MaxGenerations)
+		if (_runtime.Current.Number >= HotReloadOptions.MaxGenerations)
 		{
 			await ReloadPageAsync().ConfigureAwait(true);
 			return false;
@@ -443,7 +443,7 @@ public sealed class HotReloadClient : IAsyncDisposable
 	private async Task<IJSObjectReference> GetModuleAsync()
 	{
 		var js = _hostServices.GetRequiredService<IJSRuntime>();
-		return _module ??= await js.InvokeAsync<IJSObjectReference>("import", _runtime.Options.ScriptModulePath).ConfigureAwait(true);
+		return _module ??= await js.InvokeAsync<IJSObjectReference>("import", "./_content/BlazorHMR/hotreload.js").ConfigureAwait(true);
 	}
 
 	/// <summary>
@@ -495,6 +495,6 @@ public sealed class HotReloadClient : IAsyncDisposable
 		IReadOnlyList<string>? Assemblies,
 		IReadOnlyList<ServerMessage>? Deltas,
 		IReadOnlyList<DeltaPayload>? Updates,
-		IReadOnlyList<HotReloadDiagnostic>? Diagnostics
+		IReadOnlyList<CompileDiagnostic>? Diagnostics
 	);
 }

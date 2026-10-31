@@ -1,0 +1,15 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+	<PropertyGroup>
+		<TargetFramework>net10.0</TargetFramework>
+		<ImplicitUsings>enable</ImplicitUsings>
+		<Nullable>enable</Nullable>
+		<IsPackable>true</IsPackable>
+		<PackageId>BlazorHMR.Photino</PackageId>
+	</PropertyGroup>
+	<ItemGroup>
+		<PackageReference Include="Photino.Blazor" />
+	</ItemGroup>
+	<ItemGroup>
+		<ProjectReference Include="..\BlazorHMR\BlazorHMR.csproj" />
+	</ItemGroup>
+</Project>

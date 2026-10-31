@@ -5,7 +5,7 @@ using Microsoft.AspNetCore.Components.Rendering;
 using Microsoft.AspNetCore.Components.RenderTree;
 using Microsoft.AspNetCore.Components.Web;
 
-namespace BlazorHMR;
+namespace BlazorHMR.Blazor;
 
 /// <summary>
 /// Takes the place of the app's root component (e.g. <c>App</c>), and renders the root component of the current app generation.

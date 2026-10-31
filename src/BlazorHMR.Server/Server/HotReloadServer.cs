@@ -1,12 +1,13 @@
+using BlazorHMR.Server.Compilation;
+using BlazorHMR.Server.Project;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
-using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
-namespace BlazorHMR.Server;
+namespace BlazorHMR.Server.Server;
 
 /// <summary>
 /// The server process: a minimal web host with the WebSocket endpoint, the generation download endpoint, and the compile
@@ -25,12 +26,12 @@ internal static class HotReloadServer
 		var builder = WebApplication.CreateSlimBuilder(new WebApplicationOptions { ContentRootPath = AppContext.BaseDirectory });
 		builder.WebHost.UseUrls($"http://127.0.0.1:{port}");
 		builder.Logging.SetMinimumLevel(LogLevel.Warning);
-		builder.Services.AddCors();
+		// builder.Services.AddCors();
 
 		await using var app = builder.Build();
 
 		// Only listening on localhost, and only serving the app's own assembly, so any origin is fine.
-		app.UseCors(policy => policy.AllowAnyOrigin().AllowAnyMethod().AllowAnyHeader());
+		// app.UseCors(policy => policy.AllowAnyOrigin().AllowAnyMethod().AllowAnyHeader());
 		app.UseWebSockets();
 
 		// The client's WebSocket. Keeping the HTTP host tiny means the server starts fast and has no app dependencies.

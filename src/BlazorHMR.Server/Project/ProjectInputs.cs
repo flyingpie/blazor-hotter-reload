@@ -2,7 +2,7 @@ using System.Collections.Immutable;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 
-namespace BlazorHMR.Server.Compiling;
+namespace BlazorHMR.Server.Project;
 
 /// <summary>
 /// Everything the compiler needs, taken from the command line that MSBuild used for the last real build.

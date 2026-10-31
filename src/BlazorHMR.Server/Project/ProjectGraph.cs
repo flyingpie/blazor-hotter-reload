@@ -1,6 +1,6 @@
 using System.Text.Json;
 
-namespace BlazorHMR.Server;
+namespace BlazorHMR.Server.Project;
 
 /// <summary>
 /// Finds the libraries (project references) that the app ships, and gets their compiler command lines.

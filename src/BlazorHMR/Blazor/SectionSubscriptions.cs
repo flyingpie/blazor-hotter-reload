@@ -3,7 +3,7 @@ using System.Reflection;
 using Microsoft.AspNetCore.Components;
 using Microsoft.AspNetCore.Components.Sections;
 
-namespace BlazorHMR;
+namespace BlazorHMR.Blazor;
 
 /// <summary>
 /// Blazor allows only one <see cref="SectionOutlet"/> per section ID. A hot reload render can insert the new outlet before

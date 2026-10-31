@@ -2,12 +2,13 @@ using System.Diagnostics;
 using System.Globalization;
 using System.Reflection;
 using System.Text;
+using BlazorHMR.Server.Compilation;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.Emit;
 using Microsoft.CodeAnalysis.Host.Mef;
 using Microsoft.CodeAnalysis.Text;
 
-namespace BlazorHMR.Server.Compiling;
+namespace BlazorHMR.Server.Project;
 
 /// <summary>
 /// A Roslyn workspace with the hot projects (the app and the libraries it ships), kept in sync with the file system.

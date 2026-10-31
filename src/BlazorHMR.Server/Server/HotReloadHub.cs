@@ -1,10 +1,10 @@
 using System.Net.WebSockets;
 using System.Text.Json;
 using System.Threading.Channels;
-using BlazorHMR.Server.Compiling;
+using BlazorHMR.Server.Compilation;
 using BlazorHMR.Server.Deltas;
 
-namespace BlazorHMR.Server;
+namespace BlazorHMR.Server.Server;
 
 /// <summary>
 /// The compiled generations, and the clients that are connected to us.

@@ -17,7 +17,6 @@
 		<AllowedOutputExtensionsInPackageBuildOutputFolder>$(AllowedOutputExtensionsInPackageBuildOutputFolder);.pdb</AllowedOutputExtensionsInPackageBuildOutputFolder>
 	</PropertyGroup>
 	<ItemGroup>
-		<SupportedPlatform Include="browser" />
 		<InternalsVisibleTo Include="BlazorHMR.UnitTest" />
 	</ItemGroup>
 	<ItemGroup>

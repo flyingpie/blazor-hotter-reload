@@ -1,4 +1,4 @@
-namespace BlazorHMR.Server.Compiling;
+namespace BlazorHMR.Server.Compilation;
 
 /// <summary>
 /// The output of compiling one project: an in-memory assembly and portable PDB, or the errors that stopped it.
