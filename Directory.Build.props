@@ -2,29 +2,19 @@
 	<PropertyGroup>
 		<TargetFramework>net10.0</TargetFramework>
 		<Nullable>enable</Nullable>
-		<LangVersion>latest</LangVersion>
 		<GenerateDocumentationFile>true</GenerateDocumentationFile>
-		<!-- CS1591: Missing XML comment for publicly visible type or member -->
-		<NoWarn>$(NoWarn);CS1591</NoWarn>
 		<AnalysisMode>Recommended</AnalysisMode>
 		<EnableNETAnalyzers>true</EnableNETAnalyzers>
 		<TreatWarningsAsErrors Condition="'$(Configuration)' == 'Release'">true</TreatWarningsAsErrors>
-	</PropertyGroup>
 
-	<!-- Packaging -->
-	<PropertyGroup>
+		<!-- Packaging -->
 		<!-- Bump this for every release: consumers cache packages by version. -->
-		<VersionPrefix>0.1.8</VersionPrefix>
-		<Authors>DataRotonde</Authors>
-		<Copyright>DataRotonde</Copyright>
-		<PackageTags>blazor;webassembly;desktop;photino;hotreload;hot-reload</PackageTags>
-		<PackageReadmeFile>README.md</PackageReadmeFile>
+		<VersionPrefix>0.1.11</VersionPrefix>
+		<Authors>Marco van den Oever</Authors>
+		<Copyright>Marco van den Oever</Copyright>
+		<PackageTags>blazor;webassembly;desktop;photino;hotreload;hot-reload;hmr</PackageTags>
 		<PackageOutputPath>$(MSBuildThisFileDirectory)artifacts</PackageOutputPath>
 		<IsPackable>false</IsPackable>
 		<EmbedAllSources>true</EmbedAllSources>
 	</PropertyGroup>
-
-	<ItemGroup Condition="'$(IsPackable)' == 'true'">
-		<None Include="$(MSBuildThisFileDirectory)README.md" Pack="true" PackagePath="/" Visible="false" />
-	</ItemGroup>
 </Project>

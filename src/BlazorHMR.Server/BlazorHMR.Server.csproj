@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+	<!--
+		The hot reload server (see README.md), shipped as a .NET tool: watches the app's sources (and those of the libraries it uses),
+		compiles every change in-memory, and pushes it to the client.
+	-->
+	<PropertyGroup>
+		<AssemblyName>BlazorHMR.Server</AssemblyName>
+		<RootNamespace>BlazorHMR.Server</RootNamespace>
+		<OutputType>Exe</OutputType>
+		<IsPackable>true</IsPackable>
+		<PackAsTool>true</PackAsTool>
+		<ToolCommandName>blazor-hmr</ToolCommandName>
+		<PackageId>BlazorHMR.Server</PackageId>
+		<Description>
+			The server side of BlazorHMR, as a .NET tool (blazor-hmr): watches a Blazor WebAssembly or Photino desktop app and the libraries it uses,
+			compiles every change in-memory (as an in-place update where possible), and pushes it to the client.
+		</Description>
+	</PropertyGroup>
+	<ItemGroup>
+		<!--
+			Compile against Roslyn, but don't ship it: at runtime, Roslyn is loaded from the SDK that built the app (see RoslynLoader),
+			so it's always the same version as the source generators (Razor!) that come with that SDK.
+		-->
+		<PackageReference Include="Microsoft.CodeAnalysis.Common" ExcludeAssets="runtime" />
+		<PackageReference Include="Microsoft.CodeAnalysis.CSharp" ExcludeAssets="runtime" />
+		<!-- Same for the workspace layer, which is loaded from the SDK's dotnet-watch (together with the Edit-and-Continue engine) -->
+		<PackageReference Include="Microsoft.CodeAnalysis.CSharp.Workspaces" ExcludeAssets="runtime" />
+		<PackageReference Include="Microsoft.CodeAnalysis.Workspaces.Common" ExcludeAssets="runtime" />
+	</ItemGroup>
+</Project>
