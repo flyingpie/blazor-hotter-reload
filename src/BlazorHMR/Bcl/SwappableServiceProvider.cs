@@ -1,6 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
 
-namespace BlazorHMR;
+namespace BlazorHMR.Bcl;
 
 /// <summary>
 /// The service provider that Blazor (the host and the renderer) sees. Forwards everything to the current <see cref="AppGeneration"/>.
@@ -63,7 +63,7 @@ public sealed class SwappableServiceProvider
 	/// </summary>
 	public IServiceScope CreateScope()
 	{
-		if (_isRoot && _runtime.ManagesHostScope)
+		if (_isRoot)
 		{
 			return _runtime.CreateHostScope();
 		}

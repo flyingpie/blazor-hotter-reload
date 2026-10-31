@@ -239,7 +239,7 @@ public sealed class HotReloadClient : IAsyncDisposable
 
 			// After a fresh start request, the reloaded page catches up with this generation.
 			// A desktop page reload keeps the process (and the connection), so the server won't resend the generation: apply it first.
-			case "update" when _freshStartRequested && _runtime.ManagesHostScope:
+			case "update" when _freshStartRequested:
 				if (await ApplyGenerationAsync(message.Generation, message.Assemblies).ConfigureAwait(true))
 				{
 					await ReloadPageAsync().ConfigureAwait(true);
@@ -247,10 +247,10 @@ public sealed class HotReloadClient : IAsyncDisposable
 
 				break;
 
-			// After a fresh start request, the reloaded page catches up with this generation.
-			case "update" when _freshStartRequested:
-				await ReloadPageAsync().ConfigureAwait(true);
-				break;
+			// // After a fresh start request, the reloaded page catches up with this generation.
+			// case "update" when _freshStartRequested:
+			// 	await ReloadPageAsync().ConfigureAwait(true);
+			// 	break;
 
 			case "update":
 				await ApplyGenerationAsync(message.Generation, message.Assemblies).ConfigureAwait(true);

@@ -1,4 +1,5 @@
-﻿using BlazorHMR.Blazor;
+﻿using BlazorHMR.Bcl;
+using BlazorHMR.Blazor;
 using Microsoft.AspNetCore.Components;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -99,7 +100,7 @@ public static class HotReloadExtensions
 
 		// PhotinoX builds the host provider from the builder services; the runtime hands Blazor a provider that forwards to the
 		// current generation. The host owns the page scope, so page reloads start over without restarting the process.
-		builder.ConfigureContainer(new HotReloadServiceProviderFactory(runtime, desktop: true));
+		builder.ConfigureContainer(new HotReloadServiceProviderFactory(runtime));
 
 		return builder;
 	}

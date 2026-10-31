@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Reflection;
 using System.Runtime.ExceptionServices;
 using System.Runtime.Loader;
+using BlazorHMR.Bcl;
 using BlazorHMR.Blazor;
 using BlazorHMR.Deltas;
 using BlazorHMR.State;
@@ -34,7 +35,8 @@ public sealed class HotReloadRuntime : IAsyncDisposable
 	private IServiceProvider? _hostRoot;
 	private ServiceProvider? _hostProvider;
 	private AsyncServiceScope? _hostScope;
-	private bool _managesHostScope;
+
+	// private bool _managesHostScope;
 	private AppGeneration? _current;
 	private Renderer? _renderer;
 	private HotReloadClient? _client;
@@ -54,7 +56,7 @@ public sealed class HotReloadRuntime : IAsyncDisposable
 	/// The host owns the page's scope (desktop), so a new page gets a new scope and a rebuilt generation.
 	/// Browser hosts build a single scope themselves, and we only forward it to the generations.
 	/// </summary>
-	public bool ManagesHostScope => _managesHostScope;
+	// public bool ManagesHostScope => _managesHostScope;
 
 	private IServiceProvider HostServices =>
 		(_hostScope ?? throw new InvalidOperationException("Hot reload has not been initialized yet.")).ServiceProvider;
@@ -242,26 +244,26 @@ public sealed class HotReloadRuntime : IAsyncDisposable
 		_swapLock.Dispose();
 	}
 
-	/// <summary>
-	/// Called by the container factory, with the services that were registered on the host builder (i.e. the "host" tier).
-	/// The browser host builds the container itself, and returns a provider that forwards to the current generation.
-	/// </summary>
-	public IServiceProvider Initialize(IServiceCollection hostServices)
-	{
-		_hostDescriptors = [.. hostServices];
-		_hostProvider = hostServices.BuildServiceProvider();
-		_hostScope = _hostProvider.CreateAsyncScope();
-		_managesHostScope = false;
-
-		// Generation 0 is built the exact same way as all the next ones, so problems with that show up right away.
-		_current = BuildGeneration(
-			0,
-			_initialAssembly,
-			new Dictionary<string, Assembly>(StringComparer.OrdinalIgnoreCase) { [_initialAssembly.GetName().Name!] = _initialAssembly }
-		);
-
-		return _rootProvider;
-	}
+	// /// <summary>
+	// /// Called by the container factory, with the services that were registered on the host builder (i.e. the "host" tier).
+	// /// The browser host builds the container itself, and returns a provider that forwards to the current generation.
+	// /// </summary>
+	// public IServiceProvider Initialize(IServiceCollection hostServices)
+	// {
+	// 	_hostDescriptors = [.. hostServices];
+	// 	_hostProvider = hostServices.BuildServiceProvider();
+	// 	_hostScope = _hostProvider.CreateAsyncScope();
+	// 	_managesHostScope = false;
+	//
+	// 	// Generation 0 is built the exact same way as all the next ones, so problems with that show up right away.
+	// 	_current = BuildGeneration(
+	// 		0,
+	// 		_initialAssembly,
+	// 		new Dictionary<string, Assembly>(StringComparer.OrdinalIgnoreCase) { [_initialAssembly.GetName().Name!] = _initialAssembly }
+	// 	);
+	//
+	// 	return _rootProvider;
+	// }
 
 	/// <summary>
 	/// Called by the container factory of a desktop host that builds the host provider itself (PhotinoX): the host owns the page scope.
@@ -274,7 +276,7 @@ public sealed class HotReloadRuntime : IAsyncDisposable
 		_hostProvider = hostServices.BuildServiceProvider();
 		_hostRoot = _hostProvider;
 		_hostScope = _hostProvider.CreateAsyncScope();
-		_managesHostScope = true;
+		// _managesHostScope = true;
 
 		_current = BuildGeneration(
 			0,
@@ -293,7 +295,7 @@ public sealed class HotReloadRuntime : IAsyncDisposable
 	{
 		_hostRoot = hostRoot;
 		_hostDescriptors = hostDescriptors;
-		_managesHostScope = true;
+		// _managesHostScope = true;
 	}
 
 	/// <summary>
