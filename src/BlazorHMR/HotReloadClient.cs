@@ -157,7 +157,7 @@ public sealed class HotReloadClient : IAsyncDisposable
 				{
 					_reportedUnreachable = true;
 					Console.WriteLine(
-						$"[hotreload] Server not reachable at {socketUrl} (start the hot reload server, dtr-blazor-hotreload, to enable hot reload): {ex.Message}"
+						$"[hotreload] Server not reachable at {socketUrl} (start the hot reload server, blazor-hmr, to enable hot reload): {ex.Message}"
 					);
 				}
 			}
@@ -278,7 +278,7 @@ public sealed class HotReloadClient : IAsyncDisposable
 				_runtime.SetStatus(
 					new HotReloadStatus(
 						HotReloadStatusKind.Failed,
-						"The app was rebuilt: restart the dev server and reload the page (or run dtr-blazor-hotreload with --devserver)",
+						"The app was rebuilt: restart the dev server and reload the page (or run blazor-hmr with --devserver)",
 						[]
 					)
 				);
@@ -443,8 +443,7 @@ public sealed class HotReloadClient : IAsyncDisposable
 	private async Task<IJSObjectReference> GetModuleAsync()
 	{
 		var js = _hostServices.GetRequiredService<IJSRuntime>();
-		return _module ??= await js.InvokeAsync<IJSObjectReference>("import", _runtime.Options.ScriptModulePath)
-			.ConfigureAwait(true);
+		return _module ??= await js.InvokeAsync<IJSObjectReference>("import", _runtime.Options.ScriptModulePath).ConfigureAwait(true);
 	}
 
 	/// <summary>

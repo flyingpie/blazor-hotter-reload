@@ -127,7 +127,7 @@ internal static class ProjectGraph
 					"-p:SkipCompilerExecution=true",
 					"-p:BuildProjectReferences=false",
 					// Missing input file, which makes sure that the CoreCompile target runs, even if the project is up to date.
-					"-p:NonExistentFile=__dtr_hotreload__",
+					"-p:NonExistentFile=__blazor_hmr__",
 					"-getItem:CscCommandLineArgs",
 					"-getItem:ProjectReference",
 					"-getProperty:AssemblyName",

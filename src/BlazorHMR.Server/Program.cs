@@ -7,7 +7,7 @@ public static class Program
 	private const int DefaultPort = 2009;
 
 	private const string Usage = """
-		Usage: dtr-blazor-hotreload [options]
+		Usage: blazor-hmr [options]
 
 		  --project <path>        The app project (default: the only .csproj in the current directory)
 		  --port <port>           Port to listen on (default: 2009)

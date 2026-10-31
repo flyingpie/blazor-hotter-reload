@@ -183,11 +183,11 @@ public class HotReloadRoot : IComponent, IDisposable
 	private void BuildFreshStartButton(RenderTreeBuilder builder)
 	{
 		builder.OpenElement(30, "style");
-		builder.AddContent(31, ".dtr-hotreload-fresh{opacity:.35}.dtr-hotreload-fresh:hover{opacity:1}");
+		builder.AddContent(31, ".blazor-hmr-fresh{opacity:.35}.blazor-hmr-fresh:hover{opacity:1}");
 		builder.CloseElement();
 
 		builder.OpenElement(32, "div");
-		builder.AddAttribute(33, "class", "dtr-hotreload-fresh");
+		builder.AddAttribute(33, "class", "blazor-hmr-fresh");
 		builder.AddAttribute(
 			34,
 			"style",
