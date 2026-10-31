@@ -5,8 +5,6 @@
 	</Folder>
 	<Folder Name="/src/">
 		<Project Path="src/BlazorHMR/BlazorHMR.csproj" />
-		<Project Path="src/BlazorHMR.Desktop/BlazorHMR.Desktop.csproj" />
-		<Project Path="src/BlazorHMR.Desktop.PhotinoX/BlazorHMR.Desktop.PhotinoX.csproj" />
 		<Project Path="src/BlazorHMR.Server/BlazorHMR.Server.csproj" />
 	</Folder>
 	<Folder Name="/test/">
