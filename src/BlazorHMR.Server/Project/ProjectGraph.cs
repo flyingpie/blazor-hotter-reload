@@ -20,8 +20,9 @@ internal static class ProjectGraph
 	private static readonly HashSet<string> ExcludedProjects = new(StringComparer.OrdinalIgnoreCase)
 	{
 		"BlazorHMR.csproj",
-		"BlazorHMR.Desktop.csproj",
-		"BlazorHMR.Desktop.PhotinoX.csproj",
+		"BlazorHMR.Photino.csproj",
+		"BlazorHMR.PhotinoX.csproj",
+		"BlazorHMR.Protocol.csproj",
 	};
 
 	/// <summary>
