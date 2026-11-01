@@ -1,3 +1,4 @@
+using BlazorHMR.FullSwap;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace BlazorHMR.Bcl;

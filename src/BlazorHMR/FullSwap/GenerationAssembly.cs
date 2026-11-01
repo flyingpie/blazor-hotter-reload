@@ -1,4 +1,4 @@
-namespace BlazorHMR;
+namespace BlazorHMR.FullSwap;
 
 /// <summary>
 /// One of the assemblies of a new generation, as compiled by the hot reload server.

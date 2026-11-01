@@ -3,7 +3,7 @@ using System.Reflection;
 using System.Runtime.Loader;
 using Microsoft.Extensions.DependencyInjection;
 
-namespace BlazorHMR;
+namespace BlazorHMR.FullSwap;
 
 /// <summary>
 /// One version of the app: its assemblies, plus the DI container that was built from them.

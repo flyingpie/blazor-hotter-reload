@@ -23,6 +23,9 @@
 		<PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly" />
 	</ItemGroup>
 	<ItemGroup>
+		<ProjectReference Include="..\BlazorHMR.Protocol\BlazorHMR.Protocol.csproj" />
+	</ItemGroup>
+	<ItemGroup>
 		<!-- Imported into the build of the (directly) referencing app -->
 		<None Include="build/BlazorHMR.targets" Pack="true" PackagePath="build/" />
 	</ItemGroup>

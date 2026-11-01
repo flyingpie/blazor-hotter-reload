@@ -17,6 +17,9 @@
 		</Description>
 	</PropertyGroup>
 	<ItemGroup>
+		<ProjectReference Include="..\BlazorHMR.Protocol\BlazorHMR.Protocol.csproj" />
+	</ItemGroup>
+	<ItemGroup>
 		<!--
 			Compile against Roslyn, but don't ship it: at runtime, Roslyn is loaded from the SDK that built the app (see RoslynLoader),
 			so it's always the same version as the source generators (Razor!) that come with that SDK.

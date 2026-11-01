@@ -8,6 +8,7 @@
 	</PropertyGroup>
 	<ItemGroup>
 		<ProjectReference Include="..\..\src\BlazorHMR\BlazorHMR.csproj" />
+		<ProjectReference Include="..\..\src\BlazorHMR.Protocol\BlazorHMR.Protocol.csproj" />
 	</ItemGroup>
 	<ItemGroup>
 		<!-- To compile two versions of the same types in the tests -->

@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+	<!--
+		The wire protocol between the hot reload server and the app: message names, message types, and the JSON settings they
+		are serialized with. Shared by BlazorHMR (client) and BlazorHMR.Server, so the two sides can't drift apart.
+	-->
+	<PropertyGroup>
+		<AssemblyName>BlazorHMR.Protocol</AssemblyName>
+		<RootNamespace>BlazorHMR.Protocol</RootNamespace>
+		<IsPackable>true</IsPackable>
+		<PackageId>BlazorHMR.Protocol</PackageId>
+		<Description>The wire protocol shared by the BlazorHMR client and server.</Description>
+	</PropertyGroup>
+</Project>

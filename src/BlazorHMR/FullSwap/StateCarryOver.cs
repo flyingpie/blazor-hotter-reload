@@ -5,7 +5,7 @@ using Microsoft.AspNetCore.Components.Rendering;
 using Microsoft.AspNetCore.Components.RenderTree;
 using Microsoft.Extensions.DependencyInjection;
 
-namespace BlazorHMR.State;
+namespace BlazorHMR.FullSwap;
 
 /// <summary>
 /// Carries state from the previous generation over to a new one, for full swaps (in-place updates keep all state anyway):

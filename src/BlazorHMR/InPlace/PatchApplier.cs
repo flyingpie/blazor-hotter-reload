@@ -1,8 +1,9 @@
 using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
 using System.Reflection.Metadata;
+using BlazorHMR.Protocol;
 
-namespace BlazorHMR.Deltas;
+namespace BlazorHMR.InPlace;
 
 /// <summary>
 /// Applies in-place updates (Edit-and-Continue deltas) to the running assemblies, and tells the frameworks about it.
@@ -13,7 +14,7 @@ namespace BlazorHMR.Deltas;
 	"S3011:Reflection should not be used to increase accessibility",
 	Justification = "The runtime capabilities are only available through a private method (dotnet-watch does the same)"
 )]
-public static class DeltaApplier
+public static class PatchApplier
 {
 	/// <summary>
 	/// Whether the runtime supports in-place updates (it was started with DOTNET_MODIFIABLE_ASSEMBLIES=debug), and which kinds.
@@ -36,7 +37,7 @@ public static class DeltaApplier
 	/// <paramref name="beforeUpdateApplication"/> runs after the cache handlers and immediately before the application handlers
 	/// re-render, so callers can prepare the renderer for the new component tree.
 	/// </summary>
-	public static void Apply(IReadOnlyList<DeltaPayload> updates, Action? beforeUpdateApplication = null)
+	public static void Apply(IReadOnlyList<PatchChange> updates, Action? beforeUpdateApplication = null)
 	{
 		var assemblies = AppDomain.CurrentDomain.GetAssemblies();
 		var updatedTypes = new List<Type>();

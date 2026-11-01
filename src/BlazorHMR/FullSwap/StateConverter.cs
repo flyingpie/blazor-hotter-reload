@@ -3,7 +3,7 @@ using System.Runtime.CompilerServices;
 using Microsoft.AspNetCore.Components;
 using Microsoft.JSInterop;
 
-namespace BlazorHMR.State;
+namespace BlazorHMR.FullSwap;
 
 /// <summary>
 /// Converts objects of the previous generation's types into objects of the new generation's types (same full names, new assemblies),

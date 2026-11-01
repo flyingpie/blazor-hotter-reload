@@ -1,7 +1,7 @@
 using System.Reflection;
 using System.Runtime.Loader;
 
-namespace BlazorHMR;
+namespace BlazorHMR.FullSwap;
 
 /// <summary>
 /// Holds the assemblies of one generation: the new app assembly, plus the libraries that changed since the last build.

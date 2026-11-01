@@ -1,11 +1,9 @@
-using System.Diagnostics;
 using System.Reflection;
-using System.Runtime.ExceptionServices;
 using System.Runtime.Loader;
 using BlazorHMR.Bcl;
 using BlazorHMR.Blazor;
-using BlazorHMR.Deltas;
-using BlazorHMR.State;
+using BlazorHMR.FullSwap;
+using BlazorHMR.InPlace;
 using Microsoft.AspNetCore.Components;
 using Microsoft.AspNetCore.Components.RenderTree;
 using Microsoft.Extensions.DependencyInjection;
@@ -13,53 +11,67 @@ using Microsoft.Extensions.DependencyInjection;
 namespace BlazorHMR;
 
 /// <summary>
-/// Owns the app generations, and swaps them when a new app assembly comes in.
+/// Owns the current app generation, the host tier, and the shared state between the two ways a change can be applied.
 /// <para>
-/// The idea is borrowed from s&amp;box's hotload (compile a complete new assembly, load it next to the old one), except that we
-/// don't migrate any objects to the new types. Instead, the whole app (DI container + component tree) is rebuilt from the new assembly.
-/// That loses in-memory state, but it means that pretty much <i>any</i> change can be applied.
+/// The actual work is done by two explicit pipelines:
+/// <see cref="FullSwapApplier"/> rebuilds the whole app from a new assembly (losing in-memory state, but able to apply any
+/// change), and <see cref="InPlacePatchApplier"/> patches the running assemblies (keeping all state, but only for changes
+/// the runtime can apply). They share the <see cref="PatchGate"/>, <see cref="RenderCoordinator"/>, and
+/// <see cref="PatchRecoveryState"/> here, but otherwise have nothing in common.
 /// </para>
 /// </summary>
 public sealed class HotReloadRuntime : IAsyncDisposable
 {
-	private const string CascadingValueSupplierTypeName = "Microsoft.AspNetCore.Components.ICascadingValueSupplier";
-	private const string CascadingValueSuppliersFieldName = "<ServiceProviderCascadingValueSuppliers>k__BackingField";
-
-	private readonly AppEntryPoint _entryPoint;
 	private readonly Assembly _initialAssembly;
-	private readonly SemaphoreSlim _swapLock = new(1, 1);
-	private readonly List<HotReloadRoot> _roots = [];
 	private readonly SwappableServiceProvider _rootProvider;
+	private readonly HostTier _host = new();
+	private readonly GenerationFactory _generations;
 
-	private IReadOnlyList<ServiceDescriptor> _hostDescriptors = [];
-	private IServiceProvider? _hostRoot;
-	private ServiceProvider? _hostProvider;
-	private AsyncServiceScope? _hostScope;
-
-	// private bool _managesHostScope;
 	private AppGeneration? _current;
-	private Renderer? _renderer;
 	private HotReloadClient? _client;
-	private int _restartRequestedFor = -1;
-	private List<IComponent>? _componentsBeforeDelta;
 
 	public HotReloadRuntime(AppEntryPoint entryPoint, Assembly initialAssembly)
 	{
-		_entryPoint = entryPoint;
 		_initialAssembly = initialAssembly;
+		_generations = new GenerationFactory(entryPoint, _host);
 		_rootProvider = new SwappableServiceProvider(this, isRoot: true);
+		FullSwap = new FullSwapApplier(this);
+		InPlace = new InPlacePatchApplier(this);
 	}
 
 	public IServiceProvider RootProvider => _rootProvider;
 
 	/// <summary>
-	/// The host owns the page's scope (desktop), so a new page gets a new scope and a rebuilt generation.
-	/// Browser hosts build a single scope themselves, and we only forward it to the generations.
+	/// The full-swap pipeline: replaces the app with a complete new generation.
 	/// </summary>
-	// public bool ManagesHostScope => _managesHostScope;
+	public FullSwapApplier FullSwap { get; }
 
-	private IServiceProvider HostServices =>
-		(_hostScope ?? throw new InvalidOperationException("Hot reload has not been initialized yet.")).ServiceProvider;
+	/// <summary>
+	/// The in-place pipeline: patches the running assemblies and keeps all state.
+	/// </summary>
+	public InPlacePatchApplier InPlace { get; }
+
+	/// <summary>
+	/// Makes sure a full swap and an in-place patch never run at the same time.
+	/// </summary>
+	internal PatchGate Gate { get; } = new();
+
+	/// <summary>
+	/// The attached roots and renderer, shared by both pipelines.
+	/// </summary>
+	internal RenderCoordinator Render { get; } = new();
+
+	/// <summary>
+	/// What an in-place patch leaves behind for a possible recovery full swap.
+	/// </summary>
+	internal PatchRecoveryState Recovery { get; } = new();
+
+	/// <summary>
+	/// Builds generations. The full-swap pipeline uses it to create the next one.
+	/// </summary>
+	internal GenerationFactory Generations => _generations;
+
+	internal Assembly InitialAssembly => _initialAssembly;
 
 	public event Action? StatusChanged;
 
@@ -75,146 +87,7 @@ public sealed class HotReloadRuntime : IAsyncDisposable
 	/// <summary>
 	/// After a full swap: the state of the previous generation's components, for the new components to pick up when they are created.
 	/// </summary>
-	public StateCarryOver? PendingState { get; private set; }
-
-	/// <summary>
-	/// Loads a new version of the app assembly, and swaps the whole app over to it.
-	/// Throws when anything goes wrong before the swap; the current generation stays active in that case.
-	/// </summary>
-	public async Task ApplyAsync(IReadOnlyList<GenerationAssembly> assemblies)
-	{
-		ArgumentNullException.ThrowIfNull(assemblies);
-		ArgumentOutOfRangeException.ThrowIfZero(assemblies.Count);
-
-		await _swapLock.WaitAsync().ConfigureAwait(true);
-		try
-		{
-			var stopwatch = Stopwatch.StartNew();
-			var number = Current.Number + 1;
-
-			// Build and load the next generation before touching the current one: if anything fails here, the running app is
-			// still on the previous generation and keeps working.
-			var loadContext = new GenerationLoadContext(number, assemblies);
-			var newAssembly = loadContext.Get(_initialAssembly.GetName().Name!);
-
-			var next = BuildGeneration(number, newAssembly, loadContext.AssembliesByName);
-			var previous = Current;
-
-			// Carry over what state we can: statics and services now, components when they are created (see HotReloadComponentActivator).
-			// If an in-place update left stale code behind, the error boundary has already thrown the components away: use the ones from
-			// before that update.
-			var oldComponents =
-				_restartRequestedFor == previous.Number && _componentsBeforeDelta is not null
-					? _componentsBeforeDelta
-					: StateCarryOver.GetComponents(_renderer);
-			_componentsBeforeDelta = null;
-			var state = StateCarryOver.Capture(oldComponents, next.Assemblies);
-			try
-			{
-				state.CarryOverServicesAndStatics(previous, next);
-			}
-			catch (Exception ex)
-				when (ex is TargetInvocationException or InvalidOperationException or ArgumentException or MemberAccessException)
-			{
-				Console.WriteLine($"[hotreload] Could not carry over services/statics: {ex}");
-			}
-
-			// InvokeInitializeServices(next);
-
-			// From here on, service resolutions and renders use the new generation.
-			_current = next;
-			PendingState = state;
-			UpdateRendererCascadingValueSuppliers(next);
-
-			// Re-render all roots with the root components of the new generation (which disposes the old component tree). Group
-			// by dispatcher, so each renderer gets one render tree in one action; resetting the section subscriptions more than
-			// once would also unsubscribe the outlets that the new tree just created.
-			foreach (var roots in _roots.ToList().GroupBy(root => root.Dispatcher))
-			{
-				var dispatcher = roots.Key;
-				await dispatcher
-					.InvokeAsync(() =>
-					{
-						SectionSubscriptions.Reset(dispatcher);
-						foreach (var root in roots)
-						{
-							root.RenderGeneration();
-						}
-					})
-					.ConfigureAwait(true);
-			}
-
-			// The new tree is rendered, so nothing refers to the previous generation's components anymore.
-			await previous.DisposeAsync().ConfigureAwait(true);
-
-			stopwatch.Stop();
-			var carried = $"{state.Components} components, {state.Services} services, {state.Statics} statics";
-			Console.WriteLine(
-				$"[hotreload] Applied generation {number} ({string.Join(", ", assemblies.Select(a => a.Name))}) in {stopwatch.ElapsedMilliseconds} ms, "
-					+ $"carried over {carried} ({state.Failures} fields could not be carried over)"
-			);
-			SetStatus(
-				new HotReloadStatus(
-					HotReloadStatusKind.Applied,
-					$"Hot reload applied, app restarted, state carried over where possible ({carried}; {stopwatch.ElapsedMilliseconds} ms)",
-					[]
-				)
-			);
-		}
-		finally
-		{
-			_swapLock.Release();
-		}
-	}
-
-	/// <summary>
-	/// Patches the running assemblies in place (Edit-and-Continue deltas): nothing is recreated, so all state is kept.
-	/// Blazor re-renders all components afterwards.
-	/// </summary>
-	public async Task ApplyDeltaAsync(IReadOnlyList<DeltaPayload> updates)
-	{
-		ArgumentNullException.ThrowIfNull(updates);
-
-		await _swapLock.WaitAsync().ConfigureAwait(true);
-		try
-		{
-			var stopwatch = Stopwatch.StartNew();
-
-			// In case the update leaves stale code behind, and a full swap is needed after all (see OnUnhandledException):
-			// keep a snapshot of the current component tree. By the time the swap happens, the error boundary may have thrown
-			// parts of it away, but this snapshot still has them.
-			_componentsBeforeDelta = StateCarryOver.GetComponents(_renderer);
-
-			// The metadata handlers re-render on the dispatcher. Reset the section subscriptions there, immediately before that
-			// render: the diff may create the new outlet before disposing the old one, and Blazor allows only one per section ID.
-			if (_renderer is { } renderer)
-			{
-				var dispatcher = renderer.Dispatcher;
-				await dispatcher
-					.InvokeAsync(() => DeltaApplier.Apply(updates, () => SectionSubscriptions.Reset(dispatcher)))
-					.ConfigureAwait(true);
-			}
-			else
-			{
-				DeltaApplier.Apply(updates);
-			}
-
-			stopwatch.Stop();
-
-			Console.WriteLine($"[hotreload] Applied update in place ({updates.Count} assemblies) in {stopwatch.ElapsedMilliseconds} ms");
-			SetStatus(
-				new HotReloadStatus(
-					HotReloadStatusKind.Applied,
-					$"Hot reload applied in place, state kept ({stopwatch.ElapsedMilliseconds} ms)",
-					[]
-				)
-			);
-		}
-		finally
-		{
-			_swapLock.Release();
-		}
-	}
+	public StateCarryOver? PendingState { get; internal set; }
 
 	/// <summary>
 	/// Stops the client first, then disposes the generation and the host container (in reverse order of creation).
@@ -231,144 +104,71 @@ public sealed class HotReloadRuntime : IAsyncDisposable
 			await _current.DisposeAsync().ConfigureAwait(false);
 		}
 
-		if (_hostScope is { } hostScope)
-		{
-			await hostScope.DisposeAsync().ConfigureAwait(false);
-		}
+		await _host.DisposeAsync().ConfigureAwait(false);
 
-		if (_hostProvider is not null)
-		{
-			await _hostProvider.DisposeAsync().ConfigureAwait(false);
-		}
-
-		_swapLock.Dispose();
+		Gate.Dispose();
 	}
 
-	// /// <summary>
-	// /// Called by the container factory, with the services that were registered on the host builder (i.e. the "host" tier).
-	// /// The browser host builds the container itself, and returns a provider that forwards to the current generation.
-	// /// </summary>
-	// public IServiceProvider Initialize(IServiceCollection hostServices)
-	// {
-	// 	_hostDescriptors = [.. hostServices];
-	// 	_hostProvider = hostServices.BuildServiceProvider();
-	// 	_hostScope = _hostProvider.CreateAsyncScope();
-	// 	_managesHostScope = false;
-	//
-	// 	// Generation 0 is built the exact same way as all the next ones, so problems with that show up right away.
-	// 	_current = BuildGeneration(
-	// 		0,
-	// 		_initialAssembly,
-	// 		new Dictionary<string, Assembly>(StringComparer.OrdinalIgnoreCase) { [_initialAssembly.GetName().Name!] = _initialAssembly }
-	// 	);
-	//
-	// 	return _rootProvider;
-	// }
-
 	/// <summary>
-	/// Called by the container factory of a desktop host that builds the host provider itself (PhotinoX): the host owns the page scope.
-	/// Generation 0 is built right away, because the host resolves services from the root provider before the first page attaches;
-	/// <see cref="CreateHostScope"/> rebuilds it on a real host scope when the page attaches.
+	/// Called by the container factory of a desktop host that builds the host provider itself (PhotinoX): the host owns the page
+	/// scope. Generation 0 is built right away, because the host resolves services from the root provider before the first page
+	/// attaches; <see cref="CreateHostScope"/> rebuilds it on a real host scope when the page attaches.
 	/// </summary>
 	public IServiceProvider InitializeDesktop(IServiceCollection hostServices)
 	{
-		_hostDescriptors = [.. hostServices];
-		_hostProvider = hostServices.BuildServiceProvider();
-		_hostRoot = _hostProvider;
-		_hostScope = _hostProvider.CreateAsyncScope();
-		// _managesHostScope = true;
-
-		_current = BuildGeneration(
-			0,
-			_initialAssembly,
-			new Dictionary<string, Assembly>(StringComparer.OrdinalIgnoreCase) { [_initialAssembly.GetName().Name!] = _initialAssembly }
-		);
+		_host.InitializeDesktop(hostServices);
+		_current = BuildInitialGeneration();
 
 		return _rootProvider;
 	}
 
 	/// <summary>
-	/// Called by the desktop host: the host provider already exists, and owns the page scope. That scope is created lazily
-	/// (see <see cref="CreateHostScope"/>) because the WebView manager constructs a page scope when the page attaches.
+	/// Called by a desktop host that already has its provider (Photino): the host provider exists and owns the page scope. That
+	/// scope is created lazily (see <see cref="CreateHostScope"/>) because the WebView manager constructs a page scope when the
+	/// page attaches.
 	/// </summary>
-	public void InitializeHost(IServiceProvider hostRoot, IReadOnlyList<ServiceDescriptor> hostDescriptors)
-	{
-		_hostRoot = hostRoot;
-		_hostDescriptors = hostDescriptors;
-		// _managesHostScope = true;
-	}
+	public void InitializeHost(IServiceProvider hostRoot, IReadOnlyList<ServiceDescriptor> hostDescriptors) =>
+		_host.InitializeHost(hostRoot, hostDescriptors);
 
 	/// <summary>
 	/// Desktop page attach/reload: the WebView creates a new scope, so give it a scope of the real host provider, and rebuild the
-	/// current generation on top of it. The assemblies are kept: deltas that were applied in place stay applied, and the client keeps
+	/// current generation on top of it. The assemblies are kept: patches that were applied in place stay applied, and the client keeps
 	/// its sequence counters (so it won't try to apply them again).
 	/// </summary>
 	public SwappableServiceProvider CreateHostScope()
 	{
-		var hostRoot = _hostRoot ?? throw new InvalidOperationException("The host service provider has not been set.");
-		var scope = hostRoot.GetRequiredService<IServiceScopeFactory>().CreateAsyncScope();
-		var previousScope = _hostScope;
 		var previous = _current;
+		var previousScope = _host.ReplaceScope();
 
-		_hostScope = scope;
-		_renderer = null;
-		_roots.Clear();
+		Render.Reset();
 		HasOverlayOwner = false;
 		PendingState = null;
-		_componentsBeforeDelta = null;
-		_restartRequestedFor = -1;
+		Recovery.Reset();
 		SetStatus(null);
 
 		try
 		{
+			// The assemblies stay as they are, and the page's component tree starts over, so the generation count starts over too.
 			_current = previous is null
-				? BuildGeneration(
-					0,
-					_initialAssembly,
-					new Dictionary<string, Assembly>(StringComparer.OrdinalIgnoreCase)
-					{
-						[_initialAssembly.GetName().Name!] = _initialAssembly,
-					}
-				)
-				// The assemblies stay as they are, and the page's component tree starts over, so the generation count starts over too.
-				: BuildGeneration(0, previous.Assembly, previous.Assemblies);
+				? BuildInitialGeneration()
+				: _generations.Build(0, previous.Assembly, previous.Assemblies);
 		}
 		catch
 		{
-			_hostScope = previousScope;
+			_host.RestoreScope(previousScope);
 			_current = previous;
-			scope.Dispose();
 			throw;
 		}
 
 		if (previous is not null)
 		{
 			Console.WriteLine("[hotreload] Page reloaded, current code ready");
-			_ = DisposeGenerationAsync(previous, previousScope);
+			_ = HostTier.DisposeGenerationAsync(previous, previousScope);
 		}
 
-		// // The desktop host starts generation 0 itself (the app cannot: it only sees the host's services), so initialize it here.
-		// InvokeInitializeServices(_current);
-
-		_client?.Reattach(scope.ServiceProvider);
+		_client?.Reattach(_host.Services);
 
 		return new SwappableServiceProvider(this, isRoot: false);
-	}
-
-	private static async Task DisposeGenerationAsync(AppGeneration generation, AsyncServiceScope? scope)
-	{
-		try
-		{
-			await generation.DisposeAsync().ConfigureAwait(false);
-			if (scope is { } hostScope)
-			{
-				await hostScope.DisposeAsync().ConfigureAwait(false);
-			}
-		}
-		catch (Exception ex)
-		{
-			Console.WriteLine($"[hotreload] Could not dispose the previous page: {ex}");
-		}
 	}
 
 	/// <summary>
@@ -377,26 +177,19 @@ public sealed class HotReloadRuntime : IAsyncDisposable
 	/// </summary>
 	public void Attach(HotReloadRoot root, Renderer renderer)
 	{
-		_roots.Add(root);
-
-		if (_renderer is not null)
+		if (!Render.Attach(root, renderer))
 		{
 			return;
 		}
 
-		_renderer = renderer;
-
-		// Make sure that poking the renderer works, before anyone tries to hot reload anything.
-		_ = GetCascadingValueSuppliersField();
-
 		if (_client is null)
 		{
-			_client = new HotReloadClient(this, HostServices);
+			_client = new HotReloadClient(this, _host.Services);
 			_client.Start();
 		}
 	}
 
-	public void Detach(HotReloadRoot root) => _roots.Remove(root);
+	public void Detach(HotReloadRoot root) => Render.Detach(root);
 
 	/// <summary>
 	/// Resolves the root component by name in the current generation. Generations load their own copies of the app and changed
@@ -437,7 +230,7 @@ public sealed class HotReloadRuntime : IAsyncDisposable
 
 	/// <summary>
 	/// Called for exceptions that end up in the app's error boundary.
-	/// In-place updates can leave code behind that is out of date: e.g. when a method's signature changes, unchanged callers still call
+	/// In-place patches can leave code behind that is out of date: e.g. when a method's signature changes, unchanged callers still call
 	/// the old version, which now throws a HotReloadException. A full swap (compiled from scratch) fixes that.
 	/// </summary>
 	public void OnUnhandledException(Exception exception)
@@ -448,13 +241,13 @@ public sealed class HotReloadRuntime : IAsyncDisposable
 			isStaleCode |= current.GetType().FullName == "System.Runtime.CompilerServices.HotReloadException";
 		}
 
-		if (!isStaleCode || _client is null || _restartRequestedFor == Current.Number)
+		if (!isStaleCode || _client is null || Recovery.IsRestartRequestedFor(Current.Number))
 		{
 			return;
 		}
 
-		_restartRequestedFor = Current.Number;
-		Console.WriteLine("[hotreload] Code is out of date after an in-place update, restarting the app");
+		Recovery.RequestRestart(Current.Number);
+		Console.WriteLine("[hotreload] Code is out of date after an in-place patch, restarting the app");
 		SetStatus(
 			new HotReloadStatus(
 				HotReloadStatusKind.Compiling,
@@ -466,175 +259,21 @@ public sealed class HotReloadRuntime : IAsyncDisposable
 	}
 
 	/// <summary>
-	/// Invokes a static method, unwrapping <see cref="TargetInvocationException"/> so callers see the app's own exception.
+	/// Makes <paramref name="generation"/> the one that service resolutions and renders use. Called by
+	/// <see cref="FullSwapApplier"/> after it has built and prepared the new generation.
 	/// </summary>
-	private static void Invoke(MethodInfo method, object?[] args)
-	{
-		try
-		{
-			method.Invoke(null, args);
-		}
-		catch (TargetInvocationException ex) when (ex.InnerException is not null)
-		{
-			ExceptionDispatchInfo.Capture(ex.InnerException).Throw();
-		}
-	}
+	internal void SetCurrentGeneration(AppGeneration generation) => _current = generation;
 
 	/// <summary>
-	/// The only way to reach the renderer's cascading value suppliers is its private backing field; fail loudly if Blazor changed it.
+	/// Generation 0, built from the assembly the app booted with.
 	/// </summary>
-	private static FieldInfo GetCascadingValueSuppliersField() =>
-		typeof(Renderer).GetField(CascadingValueSuppliersFieldName, BindingFlags.Instance | BindingFlags.NonPublic)
-		?? throw new InvalidOperationException(
-			$"Field 'Renderer.{CascadingValueSuppliersFieldName}' was not found; Blazor internals have changed, BlazorHMR needs to be updated."
+	private AppGeneration BuildInitialGeneration() =>
+		_generations.Build(
+			0,
+			_initialAssembly,
+			new Dictionary<string, Assembly>(StringComparer.OrdinalIgnoreCase)
+			{
+				[_initialAssembly.GetName().Name!] = _initialAssembly,
+			}
 		);
-
-	/// <summary>
-	/// Builds one generation: a container with the host-tier services forwarded, plus the services that the app registers.
-	/// </summary>
-	private AppGeneration BuildGeneration(int number, Assembly assembly, IReadOnlyDictionary<string, Assembly> assemblies)
-	{
-		var services = new ServiceCollection();
-
-		ForwardHostServices(services);
-		InvokeConfigureServices(assembly, services);
-
-		return new AppGeneration(number, assembly, assemblies, services.BuildServiceProvider());
-	}
-
-	/// <summary>
-	/// Host-tier services are shared by all generations. Singletons and scoped services are resolved from the host tier, and registered as
-	/// instances (so a generation's container never disposes them). Transients and open generics are just registered again.
-	/// </summary>
-	private void ForwardHostServices(IServiceCollection services)
-	{
-		var hostServices = HostServices;
-		var resolved = new Dictionary<(Type, object?), List<object?>>();
-
-		foreach (var descriptor in _hostDescriptors)
-		{
-			var hasInstance = descriptor.IsKeyedService
-				? descriptor.KeyedImplementationInstance is not null
-				: descriptor.ImplementationInstance is not null;
-			if (hasInstance || descriptor.Lifetime == ServiceLifetime.Transient || descriptor.ServiceType.IsGenericTypeDefinition)
-			{
-				services.Add(descriptor);
-				continue;
-			}
-
-			// Multiple registrations for the same service type are resolved in one go, and handed out in registration order.
-			var key = (descriptor.ServiceType, descriptor.ServiceKey);
-			if (!resolved.TryGetValue(key, out var instances))
-			{
-				try
-				{
-					var enumerableType = typeof(IEnumerable<>).MakeGenericType(descriptor.ServiceType);
-					var all = descriptor.IsKeyedService
-						? ((IKeyedServiceProvider)hostServices).GetKeyedService(enumerableType, descriptor.ServiceKey)
-						: hostServices.GetService(enumerableType);
-					instances = ((IEnumerable)all!).Cast<object?>().ToList();
-				}
-				catch (Exception ex) when (ex is InvalidOperationException or ArgumentException)
-				{
-					Console.WriteLine(
-						$"[hotreload] Could not resolve host service '{descriptor.ServiceType}', it will be re-created per generation: {ex.Message}"
-					);
-					instances = [];
-				}
-
-				resolved[key] = instances;
-			}
-
-			// Resolve<IEnumerable<T>>() returns all registrations for T in registration order, so the index of this descriptor
-			// among the registrations for the same service type/key gives the instance that belongs to it.
-			var index = _hostDescriptors
-				.Where(d => d.ServiceType == descriptor.ServiceType && Equals(d.ServiceKey, descriptor.ServiceKey))
-				.ToList()
-				.IndexOf(descriptor);
-			if (index < 0 || index >= instances.Count || instances[index] is not { } instance)
-			{
-				// Not resolved yet (or a factory threw): let the new container create its own instance.
-				services.Add(descriptor);
-				continue;
-			}
-
-			services.Add(
-				descriptor.IsKeyedService
-					? new ServiceDescriptor(descriptor.ServiceType, descriptor.ServiceKey, instance)
-					: new ServiceDescriptor(descriptor.ServiceType, instance)
-			);
-		}
-	}
-
-	/// <summary>
-	/// Finds the service configuration method in this generation's app assembly (by the name and signature captured at startup)
-	/// and runs it against the new container.
-	/// </summary>
-	private void InvokeConfigureServices(Assembly assembly, IServiceCollection services)
-	{
-		var type =
-			assembly.GetType(_entryPoint.StartupTypeName, throwOnError: false)
-			?? throw new InvalidOperationException($"Type '{_entryPoint.StartupTypeName}' was not found in the app assembly.");
-
-		var parameterTypes = new[] { typeof(IServiceCollection) };
-		var method =
-			type.GetMethod(
-				_entryPoint.RegisterServicesMethodName,
-				BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic,
-				parameterTypes
-			)
-			?? throw new InvalidOperationException(
-				$"Method '{_entryPoint.StartupTypeName}.{_entryPoint.RegisterServicesMethodName}' (with the original signature) was not found in the app assembly."
-			);
-
-		Invoke(method, [services]);
-	}
-
-	// /// <summary>
-	// /// Static state in a new generation's assemblies starts out fresh (e.g. <c>MyApp.Utils.Log</c>), give the app a chance to set it up.
-	// /// Generation 0 is initialized by the app itself (browser), or by <see cref="CreateHostScope"/> when the page attaches (desktop).
-	// /// </summary>
-	// private void InvokeInitializeServices(AppGeneration generation)
-	// {
-	// 	if (_entryPoint.InitializeMethodName is null)
-	// 	{
-	// 		return;
-	// 	}
-	//
-	// 	var method =
-	// 		generation
-	// 			.Assembly.GetType(_entryPoint.StartupTypeName, throwOnError: false)
-	// 			?.GetMethod(
-	// 				_entryPoint.InitializeMethodName,
-	// 				BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic,
-	// 				[typeof(IServiceProvider)]
-	// 			)
-	// 		?? throw new InvalidOperationException(
-	// 			$"Method '{_entryPoint.StartupTypeName}.{_entryPoint.InitializeMethodName}' (with the original signature) was not found in the app assembly."
-	// 		);
-	//
-	// 	Invoke(method, [generation.Services]);
-	// }
-
-	/// <summary>
-	/// The renderer caches the cascading values that were registered as services (<c>AddCascadingValue</c>) when it is created.
-	/// Point it to the ones of the new generation, otherwise cascading parameters would be fed values of the old types.
-	/// </summary>
-	private void UpdateRendererCascadingValueSuppliers(AppGeneration generation)
-	{
-		if (_renderer is null)
-		{
-			return;
-		}
-
-		var supplierType = typeof(CascadingValueSource<>).Assembly.GetType(CascadingValueSupplierTypeName, throwOnError: true)!;
-		var suppliers = generation.Services.GetServices(supplierType).ToList();
-		var array = Array.CreateInstance(supplierType, suppliers.Count);
-		for (var i = 0; i < suppliers.Count; i++)
-		{
-			array.SetValue(suppliers[i], i);
-		}
-
-		GetCascadingValueSuppliersField().SetValue(_renderer, array);
-	}
 }

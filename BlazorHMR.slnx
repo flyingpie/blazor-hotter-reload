@@ -4,6 +4,7 @@
 		<File Path="Directory.Packages.props" />
 	</Folder>
 	<Folder Name="/src/">
+		<Project Path="src/BlazorHMR.Protocol/BlazorHMR.Protocol.csproj" />
 		<Project Path="src/BlazorHMR/BlazorHMR.csproj" />
 		<Project Path="src/BlazorHMR.Photino/BlazorHMR.Photino.csproj" />
 		<Project Path="src/BlazorHMR.PhotinoX/BlazorHMR.PhotinoX.csproj" />

@@ -1,4 +1,4 @@
-namespace BlazorHMR;
+namespace BlazorHMR.FullSwap;
 
 /// <summary>
 /// Pointer to a "Startup"-style class's "ConfigureServices"- and "Init"-methods, that set up DI and start the app.<br/>

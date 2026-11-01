@@ -1,6 +1,6 @@
-namespace BlazorHMR.Server.Deltas;
+namespace BlazorHMR.Server.InPlace;
 
-public enum DeltaStatus
+public enum PatchStatus
 {
 	/// <summary>
 	/// Nothing that changes the compiled code (e.g. only comments or whitespace).

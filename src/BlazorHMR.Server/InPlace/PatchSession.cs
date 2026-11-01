@@ -3,7 +3,7 @@ using System.Reflection;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.Host;
 
-namespace BlazorHMR.Server.Deltas;
+namespace BlazorHMR.Server.InPlace;
 
 /// <summary>
 /// Computes Edit-and-Continue deltas: changes that can be applied to the running app in place (so all state is kept).
@@ -12,7 +12,7 @@ namespace BlazorHMR.Server.Deltas;
 /// so it's driven through reflection. If its shape ever changes, <see cref="TryCreate"/> returns null, and every change becomes a full swap.
 /// </para>
 /// </summary>
-internal sealed class DeltaSession
+internal sealed class PatchSession
 {
 	private const string ServiceTypeName =
 		"Microsoft.CodeAnalysis.ExternalAccess.HotReload.Api.HotReloadService, Microsoft.CodeAnalysis.ExternalAccess.HotReload";
@@ -31,7 +31,7 @@ internal sealed class DeltaSession
 	private ImmutableArray<string> _capabilities = [];
 	private bool _started;
 
-	private DeltaSession(object service, Type serviceType)
+	private PatchSession(object service, Type serviceType)
 	{
 		_service = service;
 		_startSession = serviceType.GetMethod("StartSessionAsync", AnyInstance)!;
@@ -52,18 +52,18 @@ internal sealed class DeltaSession
 	/// Creates the session if the internal service exists. The service asks for a callback that returns the client runtime's
 	/// capabilities (which arrive over the WebSocket, after the session has started), hence the captured <c>session</c>.
 	/// </summary>
-	public static DeltaSession? TryCreate(SolutionServices services)
+	public static PatchSession? TryCreate(SolutionServices services)
 	{
 		try
 		{
 			var serviceType = Type.GetType(ServiceTypeName, throwOnError: true)!;
-			DeltaSession? session = null;
+			PatchSession? session = null;
 			Func<ValueTask<ImmutableArray<string>>> capabilities = () => ValueTask.FromResult(session!._capabilities);
 			var constructor =
 				serviceType.GetConstructor(AnyInstance, [typeof(SolutionServices), typeof(Func<ValueTask<ImmutableArray<string>>>)])
 				?? throw new MissingMethodException(serviceType.FullName, ".ctor");
 
-			session = new DeltaSession(constructor.Invoke([services, capabilities]), serviceType);
+			session = new PatchSession(constructor.Invoke([services, capabilities]), serviceType);
 			return session;
 		}
 		catch (Exception ex) when (ex is TypeLoadException or MissingMethodException or FileNotFoundException or TargetInvocationException)
@@ -110,7 +110,7 @@ internal sealed class DeltaSession
 	/// Asks Roslyn for the changes since the session's baseline. The result is a small internal object graph, read through
 	/// reflection; its "Status" tells us whether to apply the deltas, do nothing, or resume with a full swap.
 	/// </summary>
-	public async Task<DeltaResult> GetUpdatesAsync(Solution solution, IEnumerable<ProjectId> runningProjects)
+	public async Task<PatchResult> GetUpdatesAsync(Solution solution, IEnumerable<ProjectId> runningProjects)
 	{
 		var running = CreateRunningProjects(runningProjects);
 		var task = (Task)_getUpdates.Invoke(_service, [solution, running, CancellationToken.None])!;
@@ -136,40 +136,40 @@ internal sealed class DeltaSession
 
 		var result = status switch
 		{
-			"NoChangesToApply" when !restart => DeltaStatus.NoChanges,
-			"ReadyToApply" when !restart => DeltaStatus.Ready,
-			_ when diagnostics.Any(IsCompileError) => DeltaStatus.CompileErrors,
-			_ => DeltaStatus.RestartRequired,
+			"NoChangesToApply" when !restart => PatchStatus.NoChanges,
+			"ReadyToApply" when !restart => PatchStatus.Ready,
+			_ when diagnostics.Any(IsCompileError) => PatchStatus.CompileErrors,
+			_ => PatchStatus.RestartRequired,
 		};
 
 		// Roslyn keeps the update pending whenever it could emit deltas, also when some projects need a restart: we don't use it then.
-		if (status == "ReadyToApply" && result != DeltaStatus.Ready)
+		if (status == "ReadyToApply" && result != PatchStatus.Ready)
 		{
 			Discard();
 		}
 
-		return new DeltaResult(result, projectUpdates, diagnostics);
+		return new PatchResult(result, projectUpdates, diagnostics);
 	}
 
 	/// <summary>
-	/// After <see cref="DeltaStatus.Ready"/>: the deltas have been sent, the solution is the new baseline for the next changes.
+	/// After <see cref="PatchStatus.Ready"/>: the deltas have been sent, the solution is the new baseline for the next changes.
 	/// </summary>
 	public void Commit() => _commitUpdate.Invoke(_service, null);
 
 	/// <summary>
-	/// After <see cref="DeltaStatus.Ready"/>: the deltas are not used (a full swap happens instead).
+	/// After <see cref="PatchStatus.Ready"/>: the deltas are not used (a full swap happens instead).
 	/// </summary>
 	public void Discard() => _discardUpdate.Invoke(_service, null);
 
 	/// <summary>
 	/// Copies the internal ProjectUpdate into our own record, so the rest of the server doesn't have to know Roslyn's types.
 	/// </summary>
-	private static DeltaUpdate ToUpdate(object update)
+	private static PatchUpdate ToUpdate(object update)
 	{
 		var type = update.GetType();
 		T Field<T>(string name) => (T)type.GetField(name)!.GetValue(update)!;
 
-		return new DeltaUpdate(
+		return new PatchUpdate(
 			Field<Guid>("ModuleId"),
 			Field<ProjectId>("ProjectId"),
 			[.. Field<ImmutableArray<byte>>("MetadataDelta")],

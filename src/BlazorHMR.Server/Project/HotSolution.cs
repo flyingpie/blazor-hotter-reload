@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Globalization;
 using System.Reflection;
 using System.Text;
+using BlazorHMR.Protocol;
 using BlazorHMR.Server.Compilation;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.Emit;
@@ -13,7 +14,7 @@ namespace BlazorHMR.Server.Project;
 /// <summary>
 /// A Roslyn workspace with the hot projects (the app and the libraries it ships), kept in sync with the file system.
 /// <para>
-/// Used both for full compiles (new generations) and for Edit-and-Continue deltas, so the PDBs of a generation match exactly what
+/// Used both for full compiles (new generations) and for Edit-and-Continue patches, so the PDBs of a generation match exactly what
 /// the delta engine expects as its baseline. Roslyn compiles incrementally: only changed documents are re-parsed, and the source
 /// generators (Razor!) run incrementally too.
 /// </para>
