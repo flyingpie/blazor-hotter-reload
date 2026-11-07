@@ -1,4 +1,3 @@
-using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
 using Microsoft.AspNetCore.Components;
 using Microsoft.AspNetCore.Components.Rendering;
@@ -12,12 +11,6 @@ namespace BlazorHMR.Blazor;
 /// Every generation gets a freshly keyed subtree, so Blazor disposes the old components and creates new ones.
 /// The hot reload status, fresh-start button, and error panel come from <see cref="HotReloadOverlay"/>.
 /// </summary>
-[SuppressMessage(
-	"Major Code Smell",
-	"S3011:Reflection should not be used to increase accessibility",
-	Justification = "Dev-only tooling, poking Blazor internals is the point"
-)]
-[SuppressMessage("Usage", "BL0006:Do not use RenderTree types", Justification = "We need the renderer to update its cascading values")]
 public class HotReloadRoot : IComponent, IDisposable
 {
 	private RenderHandle _renderHandle;
@@ -130,12 +123,13 @@ public class HotReloadRoot : IComponent, IDisposable
 	/// <summary>
 	/// The error boundary's error panel: the same overlay component, with the exception it caught.
 	/// </summary>
-	private static RenderFragment BuildErrorContent(Exception exception) => builder =>
-	{
-		builder.OpenComponent<HotReloadOverlay>(0);
-		builder.AddComponentParameter(1, nameof(HotReloadOverlay.Exception), exception);
-		builder.CloseComponent();
-	};
+	private static RenderFragment BuildErrorContent(Exception exception) =>
+		builder =>
+		{
+			builder.OpenComponent<HotReloadOverlay>(0);
+			builder.AddComponentParameter(1, nameof(HotReloadOverlay.Exception), exception);
+			builder.CloseComponent();
+		};
 }
 
 /// <summary>

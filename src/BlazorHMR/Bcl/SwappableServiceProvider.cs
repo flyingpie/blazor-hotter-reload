@@ -11,46 +11,47 @@ namespace BlazorHMR.Bcl;
 /// Scopes created by the app itself (e.g. <c>OwningComponentBase</c>) are real scopes of the current generation.
 /// </para>
 /// </summary>
-public sealed class SwappableServiceProvider
+public sealed class SwappableServiceProvider(HotReloadRuntime runtime, bool isRoot)
 	: IKeyedServiceProvider,
 		ISupportRequiredService,
 		IServiceScopeFactory,
 		IServiceScope,
 		IAsyncDisposable
 {
-	private readonly HotReloadRuntime _runtime;
-	private readonly bool _isRoot;
+	private readonly HotReloadRuntime _runtime = runtime;
 
-	public SwappableServiceProvider(HotReloadRuntime runtime, bool isRoot)
-	{
-		_runtime = runtime;
-		_isRoot = isRoot;
-	}
+	/// <summary>
+	/// Whether this is the very first and root-most service provider. The root instance stays alive as long as the process does.<br/>
+	/// Child providers are constructed for every app generation, and contain most of the app's actual services.
+	/// </summary>
+	private readonly bool _isRoot = isRoot;
 
+	/// <summary>Required by IServiceScope.</summary>
 	public IServiceProvider ServiceProvider => this;
 
 	private IServiceProvider Current => _runtime.Current.Services;
 
 	public object? GetService(Type serviceType)
 	{
-		// Anything that asks for the container itself must get this forwarding provider, not the current generation's (which
-		// would be stale after a swap).
+		// If asking for the service provider itself.
 		if (serviceType == typeof(IServiceProvider) || serviceType == typeof(IKeyedServiceProvider))
 		{
 			return this;
 		}
 
-		// The host asks the root provider for a scope factory, to create the one scope that the renderer uses. On the desktop
-		// this is also how a new page gets a new host scope.
+		// If a new scope is requested, and we are the root, return ourselves.
 		if (_isRoot && serviceType == typeof(IServiceScopeFactory))
 		{
 			return this;
 		}
 
+		// Delegate to child provider.
 		return Current.GetService(serviceType);
 	}
 
-	public object GetRequiredService(Type serviceType) => GetService(serviceType) ?? Current.GetRequiredService(serviceType);
+	public object GetRequiredService(Type serviceType) =>
+		GetService(serviceType) // Take into account the logic in GetService().
+		?? Current.GetRequiredService(serviceType); // Redirect request to the service.
 
 	public object? GetKeyedService(Type serviceType, object? serviceKey) =>
 		((IKeyedServiceProvider)Current).GetKeyedService(serviceType, serviceKey);
@@ -59,8 +60,8 @@ public sealed class SwappableServiceProvider
 		((IKeyedServiceProvider)Current).GetRequiredKeyedService(serviceType, serviceKey);
 
 	/// <summary>
-	/// Only reachable through the root instance. In the browser this creates the (single) renderer scope; on the desktop
-	/// a new page attach asks for a new scope, which gets a real host scope under it.
+	/// Only reachable through the root instance.<br/>
+	/// A new page attach asks for a new scope, which gets a real host scope under it.
 	/// </summary>
 	public IServiceScope CreateScope()
 	{
