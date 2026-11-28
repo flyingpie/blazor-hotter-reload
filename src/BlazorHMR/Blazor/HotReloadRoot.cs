@@ -61,10 +61,10 @@ public class HotReloadRoot : IComponent, IDisposable
 	}
 
 	/// <summary>
-	/// The dispatcher of the renderer this root is attached to. The runtime uses it to reset the section subscriptions and render
-	/// in one action.
+	/// The renderer this root is attached to. The runtime uses it (and its dispatcher) to reset the section subscriptions and
+	/// render in one action.
 	/// </summary>
-	public Dispatcher Dispatcher => _renderHandle.Dispatcher;
+	public Renderer Renderer => GetRenderer(_renderHandle);
 
 	/// <summary>
 	/// Called by the runtime after a generation swap, on the renderer's dispatcher.
@@ -133,8 +133,8 @@ public class HotReloadRoot : IComponent, IDisposable
 }
 
 /// <summary>
-/// Desktop hosts cannot pass root component parameters (Photino's root component list only holds a type and a selector),
-/// so the root type name is baked in as a generic argument instead. Only the name is used; the type itself is looked up in every
+/// Not every host can pass root component parameters (Photino's root component list only holds a type and a selector), so
+/// the root type name is baked in as a generic argument instead; all hosts use this, for consistency. Only the name is used; the type itself is looked up in every
 /// generation, so it doesn't matter that the generic argument is the type from the first generation.
 /// </summary>
 public sealed class HotReloadRoot<T> : HotReloadRoot

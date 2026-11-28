@@ -26,12 +26,13 @@ internal static class HotReloadServer
 		var builder = WebApplication.CreateSlimBuilder(new WebApplicationOptions { ContentRootPath = AppContext.BaseDirectory });
 		builder.WebHost.UseUrls($"http://127.0.0.1:{port}");
 		builder.Logging.SetMinimumLevel(LogLevel.Warning);
-		// builder.Services.AddCors();
+		builder.Services.AddCors();
 
 		await using var app = builder.Build();
 
+		// A WebAssembly app downloads generations from its own origin (the dev server), so it needs CORS; the WebSocket doesn't.
 		// Only listening on localhost, and only serving the app's own assembly, so any origin is fine.
-		// app.UseCors(policy => policy.AllowAnyOrigin().AllowAnyMethod().AllowAnyHeader());
+		app.UseCors(policy => policy.AllowAnyOrigin().AllowAnyMethod().AllowAnyHeader());
 		app.UseWebSockets();
 
 		// The client's WebSocket. Keeping the HTTP host tiny means the server starts fast and has no app dependencies.

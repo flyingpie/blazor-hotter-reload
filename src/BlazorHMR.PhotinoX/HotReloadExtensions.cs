@@ -91,7 +91,10 @@ public static class HotReloadExtensions
 			throw new InvalidOperationException("No root components were found, call UseHotReload() after adding the root components.");
 		}
 
-		var runtime = new HotReloadRuntime(new AppEntryPoint(method.DeclaringType.FullName!, method.Name), appAssembly);
+		var runtime = new HotReloadRuntime(
+			new AppEntryPoint(method.DeclaringType.FullName!, method.Name, initializeServices?.Method.Name),
+			appAssembly
+		);
 
 		// Available from both the host tier and every app generation (instances are forwarded as-is).
 		builder.Services.AddSingleton(runtime);

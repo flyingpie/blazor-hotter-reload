@@ -39,7 +39,7 @@ public sealed class AppGeneration : IAsyncDisposable
 	public IReadOnlyDictionary<string, Assembly> Assemblies { get; }
 
 	/// <summary>
-	/// Blazor WebAssembly only uses a single scope, this is it.
+	/// The services of this generation (a scope of its container: Blazor uses a single scope per page).
 	/// </summary>
 	public IServiceProvider Services => _scope.ServiceProvider;
 

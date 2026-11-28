@@ -110,14 +110,17 @@ public sealed class HotReloadRuntime : IAsyncDisposable
 	}
 
 	/// <summary>
-	/// Called by the container factory of a desktop host that builds the host provider itself (PhotinoX): the host owns the page
-	/// scope. Generation 0 is built right away, because the host resolves services from the root provider before the first page
-	/// attaches; <see cref="CreateHostScope"/> rebuilds it on a real host scope when the page attaches.
+	/// Called by the container factory of a host that builds the host provider from its service collection (WebAssembly,
+	/// PhotinoX): the host tier owns the page scope. Generation 0 is built right away, because the host may resolve services from
+	/// the root provider before it creates the page scope. <see cref="CreateHostScope"/> then rebuilds generation 0 on a real host
+	/// scope: WebAssembly does that once (when the host is built), PhotinoX whenever the page attaches.
 	/// </summary>
-	public IServiceProvider InitializeDesktop(IServiceCollection hostServices)
+	public IServiceProvider InitializeWithHostServices(IServiceCollection hostServices)
 	{
-		_host.InitializeDesktop(hostServices);
-		_current = BuildInitialGeneration();
+		_host.InitializeWithHostServices(hostServices);
+		var initial = BuildInitialGeneration();
+		_generations.Initialize(initial);
+		_current = initial;
 
 		return _rootProvider;
 	}
@@ -131,7 +134,8 @@ public sealed class HotReloadRuntime : IAsyncDisposable
 		_host.InitializeHost(hostRoot, hostDescriptors);
 
 	/// <summary>
-	/// Desktop page attach/reload: the WebView creates a new scope, so give it a scope of the real host provider, and rebuild the
+	/// Page attach (WebAssembly: once, when the host is built; desktop: on every attach/reload): the host creates a new scope, so
+	/// give it a scope of the real host provider, and rebuild the
 	/// current generation on top of it. The assemblies are kept: patches that were applied in place stay applied, and the client keeps
 	/// its sequence counters (so it won't try to apply them again).
 	/// </summary>
@@ -149,9 +153,13 @@ public sealed class HotReloadRuntime : IAsyncDisposable
 		try
 		{
 			// The assemblies stay as they are, and the page's component tree starts over, so the generation count starts over too.
-			_current = previous is null
+			var next = previous is null
 				? BuildInitialGeneration()
 				: _generations.Build(0, previous.Assembly, previous.Assemblies);
+
+			// The new page gets new services, so static state that points at them has to be set up again.
+			_generations.Initialize(next);
+			_current = next;
 		}
 		catch
 		{

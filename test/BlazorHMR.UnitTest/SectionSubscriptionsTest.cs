@@ -31,7 +31,7 @@ public class SectionSubscriptionsTest
 		renderer
 			.Dispatcher.InvokeAsync(() =>
 			{
-				SectionSubscriptions.Reset(renderer.Dispatcher);
+				SectionSubscriptions.Reset(renderer);
 				root.ToggleIndicator();
 			})
 			.GetAwaiter()
@@ -43,8 +43,8 @@ public class SectionSubscriptionsTest
 	[TestMethod]
 	public void DropsSubscribersButKeepsProviders()
 	{
-		var dispatcher = Dispatcher.CreateDefault();
-		var registry = GetRegistry(dispatcher);
+		var renderer = new TestRenderer();
+		var registry = GetRegistry(renderer);
 		const string identifier = "main-header";
 		var content = new SectionContent();
 		registry.GetType().GetMethod("AddProvider", AnyInstance)!.Invoke(registry, [identifier, content, false]);
@@ -58,7 +58,7 @@ public class SectionSubscriptionsTest
 		subscribedIdentifierField.SetValue(first, identifier);
 		subscribedIdentifierField.SetValue(second, "other");
 
-		SectionSubscriptions.Reset(dispatcher);
+		SectionSubscriptions.Reset(renderer);
 
 		Assert.AreEqual(0, subscribers.Count);
 		Assert.IsNull(subscribedIdentifierField.GetValue(first), "The old outlet no longer owns the subscription");
@@ -78,11 +78,11 @@ public class SectionSubscriptionsTest
 	[TestMethod]
 	public void DoesNothingBeforeTheRegistryIsCreated()
 	{
-		SectionSubscriptions.Reset(Dispatcher.CreateDefault());
+		SectionSubscriptions.Reset(new TestRenderer());
 	}
 
-	private static object GetRegistry(Dispatcher dispatcher) =>
-		typeof(Dispatcher).GetProperty("SectionRegistry", AnyInstance)!.GetValue(dispatcher)!;
+	private static object GetRegistry(Renderer renderer) =>
+		typeof(Renderer).GetProperty("SectionRegistry", AnyInstance)!.GetValue(renderer)!;
 
 	private static IDictionary GetSubscribers(object registry) =>
 		(IDictionary)registry.GetType().GetField("_subscribersByIdentifier", AnyInstance)!.GetValue(registry)!;

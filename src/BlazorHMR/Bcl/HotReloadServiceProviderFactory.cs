@@ -11,5 +11,5 @@ public sealed class HotReloadServiceProviderFactory(HotReloadRuntime runtime) : 
 	public IServiceCollection CreateBuilder(IServiceCollection services) => services;
 
 	/// <inheritdoc/>
-	public IServiceProvider CreateServiceProvider(IServiceCollection containerBuilder) => runtime.InitializeDesktop(containerBuilder);
+	public IServiceProvider CreateServiceProvider(IServiceCollection containerBuilder) => runtime.InitializeWithHostServices(containerBuilder);
 }

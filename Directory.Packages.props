@@ -3,10 +3,12 @@
 		<ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
 	</PropertyGroup>
 	<ItemGroup>
+		<!-- Runtime (shared) -->
+		<PackageVersion Include="Microsoft.AspNetCore.Components.Web" Version="11.0.0" />
 		<!-- Runtime (browser) -->
-		<PackageVersion Include="Microsoft.AspNetCore.Components.WebAssembly" Version="10.0.13" />
+		<PackageVersion Include="Microsoft.AspNetCore.Components.WebAssembly" Version="11.0.0" />
 		<!-- Runtime (desktop) -->
-		<PackageVersion Include="Microsoft.AspNetCore.Components.WebView" Version="10.0.12" />
+		<PackageVersion Include="Microsoft.AspNetCore.Components.WebView" Version="11.0.0" />
 		<PackageVersion Include="Photino.Blazor" Version="4.0.13" />
 		<PackageVersion Include="PhotinoX.Blazor" Version="5.3.5" />
 		<!-- Server (compile-time only, the actual Roslyn is loaded from the SDK at runtime) -->

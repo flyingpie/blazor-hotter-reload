@@ -60,19 +60,19 @@ internal sealed class RenderCoordinator
 	public List<IComponent> GetComponents() => StateCarryOver.GetComponents(Renderer);
 
 	/// <summary>
-	/// Re-renders all roots with the root components of the current generation. Grouped by dispatcher, so each renderer gets
+	/// Re-renders all roots with the root components of the current generation. Grouped by renderer, so each renderer gets
 	/// one render tree in one action; resetting the section subscriptions more than once would also unsubscribe the outlets
 	/// that the new tree just created.
 	/// </summary>
 	public async Task RenderRootsAsync()
 	{
-		foreach (var roots in _roots.ToList().GroupBy(root => root.Dispatcher))
+		foreach (var roots in _roots.ToList().GroupBy(root => root.Renderer))
 		{
-			var dispatcher = roots.Key;
-			await dispatcher
-				.InvokeAsync(() =>
+			var renderer = roots.Key;
+			await renderer
+				.Dispatcher.InvokeAsync(() =>
 				{
-					SectionSubscriptions.Reset(dispatcher);
+					SectionSubscriptions.Reset(renderer);
 					foreach (var root in roots)
 					{
 						root.RenderGeneration();

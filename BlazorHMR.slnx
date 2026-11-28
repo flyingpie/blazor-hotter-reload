@@ -8,6 +8,7 @@
 		<Project Path="src/BlazorHMR/BlazorHMR.csproj" />
 		<Project Path="src/BlazorHMR.Photino/BlazorHMR.Photino.csproj" />
 		<Project Path="src/BlazorHMR.PhotinoX/BlazorHMR.PhotinoX.csproj" />
+		<Project Path="src/BlazorHMR.WebAssembly/BlazorHMR.WebAssembly.csproj" />
 		<Project Path="src/BlazorHMR.Server/BlazorHMR.Server.csproj" />
 	</Folder>
 	<Folder Name="/test/">

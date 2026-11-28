@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk.Razor">
+	<!--
+		WebAssembly host for the hot reload: reference this from the Blazor WebAssembly app, in Debug builds only, and call
+		UseHotReload() on the WebAssemblyHostBuilder. Brings in the BlazorHMR core package (and its build targets).
+	-->
+	<PropertyGroup>
+		<TargetFramework>net11.0</TargetFramework>
+		<ImplicitUsings>enable</ImplicitUsings>
+		<Nullable>enable</Nullable>
+		<AssemblyName>BlazorHMR.WebAssembly</AssemblyName>
+		<RootNamespace>BlazorHMR.WebAssembly</RootNamespace>
+		<IsPackable>true</IsPackable>
+		<PackageId>BlazorHMR.WebAssembly</PackageId>
+		<Description>
+			Hot reload for Blazor WebAssembly apps that applies (almost) any change while the app runs: in place where possible (keeping all state),
+			otherwise by swapping in a new version of the app (carrying over state). Use together with the BlazorHMR.Server tool. Reference it in Debug builds only.
+		</Description>
+	</PropertyGroup>
+	<ItemGroup>
+		<SupportedPlatform Include="browser" />
+	</ItemGroup>
+	<ItemGroup>
+		<PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly" />
+	</ItemGroup>
+	<ItemGroup>
+		<ProjectReference Include="..\BlazorHMR\BlazorHMR.csproj" />
+	</ItemGroup>
+</Project>

@@ -22,6 +22,7 @@ internal static class ProjectGraph
 		"BlazorHMR.csproj",
 		"BlazorHMR.Photino.csproj",
 		"BlazorHMR.PhotinoX.csproj",
+		"BlazorHMR.WebAssembly.csproj",
 		"BlazorHMR.Protocol.csproj",
 	};
 

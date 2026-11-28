@@ -1,6 +1,6 @@
 using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
-using Microsoft.AspNetCore.Components;
+using Microsoft.AspNetCore.Components.RenderTree;
 using Microsoft.AspNetCore.Components.Sections;
 
 namespace BlazorHMR.Blazor;
@@ -26,19 +26,20 @@ public static class SectionSubscriptions
 	private static bool _warned;
 
 	/// <summary>
-	/// Drops the dispatcher's current section subscriptions, but keeps the providers. Must run on the dispatcher, immediately
-	/// before the render that recreates or moves the outlets.
+	/// Drops the renderer's current section subscriptions, but keeps the providers. Must run on the renderer's dispatcher,
+	/// immediately before the render that recreates or moves the outlets. (Since .NET 11 the registry lives on the renderer;
+	/// before that it lived on the dispatcher.)
 	/// </summary>
-	public static void Reset(Dispatcher dispatcher)
+	public static void Reset(Renderer renderer)
 	{
-		var registryField = typeof(Dispatcher).GetField(RegistryFieldName, BindingFlags.Instance | BindingFlags.NonPublic);
+		var registryField = typeof(Renderer).GetField(RegistryFieldName, BindingFlags.Instance | BindingFlags.NonPublic);
 		if (registryField is null)
 		{
-			Warn($"field 'Dispatcher.{RegistryFieldName}' was not found");
+			Warn($"field 'Renderer.{RegistryFieldName}' was not found");
 			return;
 		}
 
-		var registry = registryField.GetValue(dispatcher);
+		var registry = registryField.GetValue(renderer);
 		if (registry is null)
 		{
 			// Nothing has subscribed yet, so there is nothing to reset.

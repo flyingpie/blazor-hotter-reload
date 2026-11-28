@@ -142,6 +142,33 @@ internal sealed class GenerationFactory(AppEntryPoint entryPoint, HostTier host)
 	}
 
 	/// <summary>
+	/// Static state in a new generation's assemblies starts out fresh (e.g. <c>MyApp.Utils.Log</c>), so give the app a chance to
+	/// set it up, with the generation's services. Called for every generation that becomes current, after state was carried over
+	/// (so what the app sets up here wins over carried-over statics).
+	/// </summary>
+	public void Initialize(AppGeneration generation)
+	{
+		if (entryPoint.InitializeMethodName is null)
+		{
+			return;
+		}
+
+		var method =
+			generation
+				.Assembly.GetType(entryPoint.StartupTypeName, throwOnError: false)
+				?.GetMethod(
+					entryPoint.InitializeMethodName,
+					BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic,
+					[typeof(IServiceProvider)]
+				)
+			?? throw new InvalidOperationException(
+				$"Method '{entryPoint.StartupTypeName}.{entryPoint.InitializeMethodName}' (with the original signature) was not found in the app assembly."
+			);
+
+		Invoke(method, [generation.Services]);
+	}
+
+	/// <summary>
 	/// Invokes a static method, unwrapping <see cref="TargetInvocationException"/> so callers see the app's own exception.
 	/// </summary>
 	private static void Invoke(MethodInfo method, object?[] args)

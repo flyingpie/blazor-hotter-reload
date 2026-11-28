@@ -33,7 +33,7 @@ public sealed record ProjectLocation(
 			if (!File.Exists(infoFile))
 			{
 				Log.Error(
-					$"'{infoFile}' still not found; does the project reference the BlazorHMR (or .Desktop) package, and is it built in Debug?"
+					$"'{infoFile}' still not found; does the project reference a BlazorHMR package (BlazorHMR.WebAssembly, .Photino or .PhotinoX), and is it built in Debug?"
 				);
 				return null;
 			}

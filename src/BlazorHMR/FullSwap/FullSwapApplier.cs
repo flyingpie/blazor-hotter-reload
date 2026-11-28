@@ -45,6 +45,17 @@ public sealed class FullSwapApplier(HotReloadRuntime runtime)
 			Console.WriteLine($"[hotreload] Could not carry over services/statics: {ex}");
 		}
 
+		// Still before the swap: if the app's initialization throws, the previous generation keeps running.
+		try
+		{
+			runtime.Generations.Initialize(next);
+		}
+		catch
+		{
+			await next.DisposeAsync().ConfigureAwait(true);
+			throw;
+		}
+
 		// From here on, service resolutions and renders use the new generation.
 		runtime.SetCurrentGeneration(next);
 		runtime.PendingState = state;

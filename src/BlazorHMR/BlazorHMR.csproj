@@ -1,6 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk.Razor">
 	<!--
-		Browser side of the hot reload (see README.md): reference this from the Blazor WebAssembly app, in Debug builds only.
+		Client side of the hot reload, shared by all hosts (see README.md). Apps reference one of the host packages
+		(BlazorHMR.WebAssembly, BlazorHMR.Photino, BlazorHMR.PhotinoX) in Debug builds only, which bring this one in.
 		The build/BlazorHMR.targets in the package is imported into the app's build automatically.
 	-->
 	<PropertyGroup>
@@ -9,24 +10,37 @@
 		<IsPackable>true</IsPackable>
 		<PackageId>BlazorHMR</PackageId>
 		<Description>
-			Hot reload for Blazor WebAssembly apps that applies (almost) any change while the app runs: in place where possible (keeping all state),
-			otherwise by swapping in a new version of the app (carrying over state). Use together with the BlazorHMR.Server tool. Reference it in Debug builds only.
+			Hot reload for Blazor apps that applies (almost) any change while the app runs: in place where possible (keeping all state),
+			otherwise by swapping in a new version of the app (carrying over state). The host-independent core: reference one of the host packages
+			(BlazorHMR.WebAssembly, BlazorHMR.Photino, BlazorHMR.PhotinoX) instead. Use together with the BlazorHMR.Server tool.
 		</Description>
 		<!-- Ship the PDB in the package, for line numbers in stack traces -->
 		<DebugType>portable</DebugType>
 		<AllowedOutputExtensionsInPackageBuildOutputFolder>$(AllowedOutputExtensionsInPackageBuildOutputFolder);.pdb</AllowedOutputExtensionsInPackageBuildOutputFolder>
+		<!--
+			Since .NET 11, the Razor SDK packs generated build/, buildMultiTargeting/ and buildTransitive/BlazorHMR.targets files
+			(that only import the static web assets), which would replace our own build/BlazorHMR.targets. Turn those off; ours
+			imports the static web assets itself.
+		-->
+		<StaticWebAssetsDisableProjectBuildPropsFileGeneration>true</StaticWebAssetsDisableProjectBuildPropsFileGeneration>
+		<StaticWebAssetsDisableProjectBuildMultiTargetingPropsFileGeneration>true</StaticWebAssetsDisableProjectBuildMultiTargetingPropsFileGeneration>
+		<StaticWebAssetsDisableProjectBuildTransitivePropsFileGeneration>true</StaticWebAssetsDisableProjectBuildTransitivePropsFileGeneration>
 	</PropertyGroup>
 	<ItemGroup>
 		<InternalsVisibleTo Include="BlazorHMR.UnitTest" />
 	</ItemGroup>
 	<ItemGroup>
-		<PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly" />
+		<PackageReference Include="Microsoft.AspNetCore.Components.Web" />
 	</ItemGroup>
 	<ItemGroup>
 		<ProjectReference Include="..\BlazorHMR.Protocol\BlazorHMR.Protocol.csproj" />
 	</ItemGroup>
 	<ItemGroup>
-		<!-- Imported into the build of the (directly) referencing app -->
+		<!--
+			Imported into the build of the app. Apps reference a host package (BlazorHMR.WebAssembly, .Photino, .PhotinoX), and NuGet
+			doesn't flow build/ through package dependencies, so it is packed under buildTransitive/ too.
+		-->
 		<None Include="build/BlazorHMR.targets" Pack="true" PackagePath="build/" />
+		<None Include="build/BlazorHMR.targets" Pack="true" PackagePath="buildTransitive/" />
 	</ItemGroup>
 </Project>

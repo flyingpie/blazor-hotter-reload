@@ -32,8 +32,7 @@ public sealed class InPlacePatchApplier(HotReloadRuntime runtime)
 			{
 				if (runtime.Render.Renderer is { } renderer)
 				{
-					var dispatcher = renderer.Dispatcher;
-					PatchApplier.Apply(patches, () => SectionSubscriptions.Reset(dispatcher));
+					PatchApplier.Apply(patches, () => SectionSubscriptions.Reset(renderer));
 				}
 				else
 				{

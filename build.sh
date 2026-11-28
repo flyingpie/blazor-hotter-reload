@@ -53,6 +53,11 @@ dotnet pack ./src/BlazorHMR.PhotinoX/BlazorHMR.PhotinoX.csproj \
 	--output "$OUTPUT" \
 	/p:VersionSuffix="$VERSIONSUFFIX"
 
+dotnet pack ./src/BlazorHMR.WebAssembly/BlazorHMR.WebAssembly.csproj \
+	--configuration $CONF \
+	--output "$OUTPUT" \
+	/p:VersionSuffix="$VERSIONSUFFIX"
+
 dotnet pack ./src/BlazorHMR.Server/BlazorHMR.Server.csproj \
 	--configuration $CONF \
 	--output "$OUTPUT" \

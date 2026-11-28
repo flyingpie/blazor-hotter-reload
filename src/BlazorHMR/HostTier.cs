@@ -27,9 +27,10 @@ internal sealed class HostTier : IAsyncDisposable
 		(_hostScope ?? throw new InvalidOperationException("Hot reload has not been initialized yet.")).ServiceProvider;
 
 	/// <summary>
-	/// Called by the container factory of a host that builds the host provider itself (PhotinoX): the host owns the page scope.
+	/// Called by the container factory of a host that builds the host provider from its service collection (WebAssembly,
+	/// PhotinoX): the host tier owns the page scope.
 	/// </summary>
-	public void InitializeDesktop(IServiceCollection hostServices)
+	public void InitializeWithHostServices(IServiceCollection hostServices)
 	{
 		_descriptors = [.. hostServices];
 		_hostProvider = hostServices.BuildServiceProvider();

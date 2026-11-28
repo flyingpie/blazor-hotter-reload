@@ -16,7 +16,7 @@ public class GenerationFactoryTest
 		hostServices.AddSingleton<IGreeter>(_ => new Greeter("first"));
 		hostServices.AddSingleton<IGreeter>(_ => new Greeter("second"));
 		hostServices.AddSingleton(_ => new Counter());
-		host.InitializeDesktop(hostServices);
+		host.InitializeWithHostServices(hostServices);
 
 		var factory = new GenerationFactory(
 			new AppEntryPoint(typeof(TestStartup).FullName!, nameof(TestStartup.ConfigureServices)),

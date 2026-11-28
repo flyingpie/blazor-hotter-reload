@@ -16,6 +16,7 @@ public static class Program
 		  --port <port>           Port to listen on (default: 2009)
 		  --devserver             Also run (and restart after regular builds) the app itself ("dotnet run")
 		  --launch-profile <name> Launch profile for the dev server (default: the first one in Properties/launchSettings.json)
+		  --devserver-url <url>   Where the dev server listens (default: the launch profile's applicationUrl; not needed for desktop apps)
 		""";
 
 	public static async Task<int> Main(string[] args)
@@ -24,7 +25,7 @@ public static class Program
 		string? project = null;
 		var port = DefaultPort;
 		var devServer = false;
-		// Uri? devServerUrl = null;
+		Uri? devServerUrl = null;
 		string? launchProfile = null;
 
 		var queue = new Queue<string>(args);
@@ -41,9 +42,9 @@ public static class Program
 				case "--devserver":
 					devServer = true;
 					break;
-				// case "--devserver-url" when queue.Count > 0:
-				// 	devServerUrl = new Uri(queue.Dequeue());
-				// 	break;
+				case "--devserver-url" when queue.Count > 0:
+					devServerUrl = new Uri(queue.Dequeue());
+					break;
 				case "--launch-profile" when queue.Count > 0:
 					launchProfile = queue.Dequeue();
 					break;
@@ -76,8 +77,10 @@ public static class Program
 		DevServerProcess? devServerProcess = null;
 		if (devServer)
 		{
-			// Desktop apps run a window instead of an HTTP server, so a launch profile without applicationUrl is fine.
-			devServerProcess = new DevServerProcess(location, launchProfile);
+			// A WebAssembly app's dev server is polled until it answers. Desktop apps run a window instead of an HTTP server, so a
+			// launch profile without applicationUrl is fine: then there is nothing to wait for.
+			devServerUrl ??= LaunchSettings.GetApplicationUrl(location.ProjectDirectory, launchProfile);
+			devServerProcess = new DevServerProcess(location, launchProfile, devServerUrl);
 		}
 
 		using (devServerProcess)

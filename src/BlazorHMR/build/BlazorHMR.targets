@@ -1,5 +1,15 @@
 <Project>
 	<!--
+		The static web assets of this package (hotreload.js). The SDK generates this file in build/, and would normally import it
+		through a generated BlazorHMR.targets; that is turned off (see BlazorHMR.csproj), as this file takes its place. The path
+		goes through build/, so it also works when this file is imported from buildTransitive/.
+	-->
+	<Import
+		Project="$(MSBuildThisFileDirectory)../build/Microsoft.AspNetCore.StaticWebAssets.targets"
+		Condition="Exists('$(MSBuildThisFileDirectory)../build/Microsoft.AspNetCore.StaticWebAssets.targets')"
+	/>
+
+	<!--
 		Tell the compiler task to put command line args in the "CscCommandLineArgs" property, so we can capture them.
 		We can then use these to re-run the compiler with the exact same command and args.
 		Can be disabled by setting the "BlazorHMR"-property to "false".
